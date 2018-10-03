@@ -10,6 +10,7 @@ from scipy.fftpack import fft,ifft
 import queue
 import math
 from scipy.optimize import leastsq
+
 def func(p,x):
     k,b=p
     return k*x+b
@@ -17,23 +18,38 @@ def func(p,x):
 def error(p,x,y,s):
     return func(p,x)-y #x、y都是列表，故返回值也是个列表
 
-def MaxMinNormalization(x):
+def MaxMinNormalization(x,minv,maxv):
     Min=np.min(x)
     Max=np.max(x)
-    y = (x - Min) / (Max - Min+0.0000000001);
+    y = (x - Min) / (Max - Min+0.0000000001)*(maxv-minv)+minv;
     return y
+#递归算法求右侧波峰
+def getNextPeaks(peaks,cepstrum,biasThr,distThr):
+    #最小二乘法预判右侧紧邻波峰
+    lenPeaks=len(peaks)#波峰数量
+    harmonicIDs=np.arange(lenPeaks+1)+1
+    p0=[peaks[lenPeaks-1]/lenPeaks,0]#初始化参数
+    Xi=np.array(harmonicIDs[0:lenPeaks])
+    Yi=np.array(peaks)
+    s="test"
+    para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
+    nexPeakPos=int(para[0][0]*harmonicIDs[lenPeaks]+para[0][1])#下一个峰位置预测
+    
+    
+    return 0
+
 def getPitch(dataClip,Fs,nfft):
     pitch=0
     dataClip[0:int(30*nfft/Fs)]=0
     print(frame*nfft/Fs)
-    '''
+    
     plt.subplot(121)
     plt.plot(np.arange(len(dataClip)), dataClip)
     plt.subplot(122)
-    '''
+    
     cepstrum=np.abs(fft(dataClip))[0:int(len(dataClip)/2)]
-    #plt.plot(np.arange(len(cepstrum)), cepstrum)
-    #plt.show()
+    plt.plot(np.arange(len(cepstrum)), cepstrum)
+    plt.show()
     length=len(cepstrum)
     cutoff=int(Fs/2/800)
     peaks=[]
@@ -50,7 +66,7 @@ def getPitch(dataClip,Fs,nfft):
         #与半峰最小值差值
         dist=cepstrum[simiMax]-simiMin
         #差值比例
-        dist=dist/(cepstrum[simiMax]-simiMin)
+        dist=dist/(cepstrum[maxpos]-simiMin)
         if(dist>0.66):
             #1 2
             #return Fs/2/simiMax//
@@ -74,7 +90,7 @@ def getPitch(dataClip,Fs,nfft):
                 #与半峰最小值差值
                 dist=cepstrum[fourMax1]-fouMin1
                 #差值比例
-                dist=dist/(cepstrum[fourMax1]-fouMin1)
+                dist=dist/(cepstrum[simiMax]-fouMin1)
                 if(dist>0.66):
                     #寻找四分3峰
                     fourMax2=np.argmax(cepstrum[fourPos2-rad:fourPos2+rad])+fourPos2-rad#四分峰位置1
@@ -97,14 +113,13 @@ def getPitch(dataClip,Fs,nfft):
         thrMax=np.argmax(cepstrum[thrPos-rad:thrPos+rad])+thrPos-rad#三分峰位置
         bias=abs(thrPos-thrMax)/rad#偏离度10%
         if bias<0.2:
-            #半峰与最高峰之间的最小值
+            #2/3峰与最大峰之间的最小数
             thrMin=np.min(cepstrum[thrMax:maxpos])
-            #与半峰最小值差值
+            #与最小值差值
             dist=cepstrum[thrMax]-thrMin
             #差值比例
-            dist=dist/(cepstrum[thrMax]-thrMin)
+            dist=dist/(cepstrum[maxpos]-thrMin)
             if(dist>0.66):
-                #2 3 
                 #return Fs/2/simiMax
                 #寻找1 如果寻找不到1 则取消2
                 thd1=thrMax
@@ -122,10 +137,10 @@ def getPitch(dataClip,Fs,nfft):
                 bias=abs(thrPos2-thrMax2)/rad#偏离度10%
                 print(bias)
                 if bias<0.2:
-                    #半峰与最高峰之间的最小值
+                    #与2/3峰之间的最小值
                     thrMin2=np.min(cepstrum[thrMax2:thrMax])
-                    #与半峰最小值差值
-                    dist=cepstrum[thrMax2]-thrMin2
+                    #与最小值差值
+                    dist=cepstrum[thrMax]-thrMin2
                     #差值比例
                     dist=dist/(cepstrum[thrMax2]-thrMin2)
                     if(dist>0.66):
@@ -149,7 +164,7 @@ def getPitch(dataClip,Fs,nfft):
     return Fs/2/peaks[0]
 
     #每做一次线性回归 找下一个峰
-            
+    #getNextPeaks(peaks,cepstrum,0.1,0.66)#递归求右侧波峰        
     '''while pos<length:
         maxpos=np.argmax(cepstrum[pos:-1])+pos
         print(maxpos)
@@ -161,7 +176,7 @@ def getPitch(dataClip,Fs,nfft):
     return pitch
     '''
 root_data_path = "/home/liningbo/文档/pyAudioAnalysis-master/tests/"
-class1_path="guqin3/"
+class1_path="guqin7/"
 class2_path="guqin2/"
 class1_list=os.listdir(root_data_path+class1_path)
 class1_listLen=len(class1_list)
@@ -185,7 +200,7 @@ for index in range(0,class1_listLen):
     times = librosa.frames_to_time(np.arange(len(rmse)),sr=Fs,hop_length=nfft,n_fft=nfft)
     plt.figure(figsize=(12, 4))
     if rmseS==1:
-        plt.plot(times, MaxMinNormalization(rmse)) 
+        plt.plot(times, MaxMinNormalization(rmse,0,1)) 
         #plt.axhline(0.001, color='r', alpha=0.5)
         plt.xlabel('Time')
         plt.ylabel('RMSE')
@@ -195,12 +210,12 @@ for index in range(0,class1_listLen):
     speech_stft_prob=speech_stft_Enp/np.sum(speech_stft_Enp,axis=0)
     EE=np.sum(-np.log(speech_stft_prob)*speech_stft_prob,axis=0)
     if EES==1:
-        plt.plot(times, MaxMinNormalization(EE))
+        plt.plot(times, MaxMinNormalization(EE,0,1))
         plt.xlabel('Time')
         plt.ylabel('EE')
         plt.axis('tight')
         plt.tight_layout()
-    EEdiff=np.diff(MaxMinNormalization(EE))
+    EEdiff=np.diff(MaxMinNormalization(EE,0,1))
     EEdiff=np.insert(EEdiff,0,0,None)
     if EEDS==1:
         plt.plot(times, EEdiff)
@@ -208,7 +223,7 @@ for index in range(0,class1_listLen):
         plt.ylabel('EEDiff')
         plt.axis('tight')
         plt.tight_layout()
-    RMSEdiff =np.diff(MaxMinNormalization(rmse))
+    RMSEdiff =np.diff(MaxMinNormalization(rmse,0,1))
     RMSEdiff=np.insert(RMSEdiff,0,0,None)
     if rmseDS==1:
         plt.plot(times, RMSEdiff)
@@ -225,5 +240,9 @@ for index in range(0,class1_listLen):
         dataClip=np.copy(speech_stft[frame])
         pitch=getPitch(dataClip,Fs,nfft)
         pitchs.append(pitch)
-    plt.plot(times,pitchs)
+    plt.plot(times,pitchs,label='pitch')
+    plt.plot(times, MaxMinNormalization(rmse,0,np.max(pitchs)),label='rmse')
+    plt.plot(times, -MaxMinNormalization(EE,0,np.max(pitchs))/2,label='- EE')
+    plt.axhline(0, color='r', alpha=0.5)
+    plt.legend()
     plt.show()

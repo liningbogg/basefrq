@@ -27,15 +27,29 @@ def MaxMinNormalization(x,minv,maxv):
 def getNextPeaks(peaks,cepstrum,biasThr,distThr):
     #最小二乘法预判右侧紧邻波峰
     lenPeaks=len(peaks)#波峰数量
-    harmonicIDs=np.arange(lenPeaks+1)+1
-    p0=[peaks[lenPeaks-1]/lenPeaks,0]#初始化参数
-    Xi=np.array(harmonicIDs[0:lenPeaks])
-    Yi=np.array(peaks)
-    s="test"
-    para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
-    nexPeakPos=int(para[0][0]*harmonicIDs[lenPeaks]+para[0][1])#下一个峰位置预测
-    
-    
+    if lenPeaks>1:
+        harmonicIDs=np.arange(lenPeaks+1)+1
+        p0=[peaks[lenPeaks-1]/lenPeaks,0]#初始化参数
+        Xi=np.array(harmonicIDs[0:lenPeaks])
+        Yi=np.array(peaks)
+        s="test"
+        para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
+        nextPeakPos=int(para[0][0]*harmonicIDs[lenPeaks]+para[0][1])#下一个峰位置预测
+    else:
+        nextPeakPos=2*peaks[0]        
+    rad=int((nextPeakPos-peaks[lenPeaks-1])/2)#搜索波峰半径
+    if nextPeakPos>(len(cepstrum)-rad):
+        return 0;
+    print(nextPeakPos-rad,nextPeakPos+rad)
+    nextMaxpos=np.argmax(cepstrum[nextPeakPos-rad:nextPeakPos+rad])+nextPeakPos-rad#下一个波峰检测到的位置
+    bias=abs(nextMaxpos-nextPeakPos)/rad#计算波峰偏离
+    #判断检测到打波峰位置跟预测的是否一致
+    if bias<0.1:
+        trough=np.min(cepstrum[peaks[lenPeaks-1]:nextMaxpos])#波谷检测
+        dist=(cepstrum[nextMaxpos]-trough)/(cepstrum[peaks[lenPeaks-1]]-trough)#海拔高度检测
+        if dist>0.25:#宽松判别条件
+            peaks.append(nextMaxpos)
+            getNextPeaks(peaks,cepstrum,biasThr,distThr)
     return 0
 
 def getPitch(dataClip,Fs,nfft):
@@ -43,13 +57,13 @@ def getPitch(dataClip,Fs,nfft):
     dataClip[0:int(30*nfft/Fs)]=0
     print(frame*nfft/Fs)
     
-    plt.subplot(121)
-    plt.plot(np.arange(len(dataClip)), dataClip)
-    plt.subplot(122)
+    #plt.subplot(121)
+    #plt.plot(np.arange(len(dataClip)), dataClip)
+    #plt.subplot(122)
     
     cepstrum=np.abs(fft(dataClip))[0:int(len(dataClip)/2)]
-    plt.plot(np.arange(len(cepstrum)), cepstrum)
-    plt.show()
+    #plt.plot(np.arange(len(cepstrum)), cepstrum)
+    
     length=len(cepstrum)
     cutoff=int(Fs/2/800)
     peaks=[]
@@ -72,7 +86,7 @@ def getPitch(dataClip,Fs,nfft):
             #return Fs/2/simiMax//
             #四分检测
             
-            fourPos1=int(simiMax/2)
+            fourPos1=int(simiMax/2)#四分之一峰
             p0=[fourPos1,0]
             Xi=np.array([2,4])
             Yi=np.array([simiMax,maxpos])
@@ -159,12 +173,18 @@ def getPitch(dataClip,Fs,nfft):
              print(thd1)
              print(thd2)
     peaks.append(maxpos)
-    if len(peaks)>0:
-        print(peaks)
-    return Fs/2/peaks[0]
 
     #每做一次线性回归 找下一个峰
-    #getNextPeaks(peaks,cepstrum,0.1,0.66)#递归求右侧波峰        
+    getNextPeaks(peaks,cepstrum,0.1,0.66)#递归求右侧波峰 
+    if len(peaks)>0:
+        print(peaks)
+    #plt.show()
+    if len(peaks)>1:
+        return Fs/2/peaks[0]
+    else:
+        return 0
+
+           
     '''while pos<length:
         maxpos=np.argmax(cepstrum[pos:-1])+pos
         print(maxpos)
@@ -176,7 +196,7 @@ def getPitch(dataClip,Fs,nfft):
     return pitch
     '''
 root_data_path = "/home/liningbo/文档/pyAudioAnalysis-master/tests/"
-class1_path="guqin7/"
+class1_path="guqin1/"
 class2_path="guqin2/"
 class1_list=os.listdir(root_data_path+class1_path)
 class1_listLen=len(class1_list)

@@ -28,7 +28,7 @@ def getNextPeaks(peaks,cepstrum,biasThr,distThr):
     #最小二乘法预判右侧紧邻波峰
     lenPeaks=len(peaks)#波峰数量
     if lenPeaks>1:
-        harmonicIDs=np.arange(lenPeaks+1)+1
+        harmonicIDs=np.arange(lenPeaks+1)+1#设置波峰ID
         p0=[peaks[lenPeaks-1]/lenPeaks,0]#初始化参数
         Xi=np.array(harmonicIDs[0:lenPeaks])
         Yi=np.array(peaks)
@@ -47,11 +47,11 @@ def getNextPeaks(peaks,cepstrum,biasThr,distThr):
     if bias<0.1:
         trough=np.min(cepstrum[peaks[lenPeaks-1]:nextMaxpos])#波谷检测
         dist=(cepstrum[nextMaxpos]-trough)/(cepstrum[peaks[lenPeaks-1]]-trough)#海拔高度检测
-        if dist>0.25:#宽松判别条件
+        if dist>0.20:#宽松判别条件
             peaks.append(nextMaxpos)
             getNextPeaks(peaks,cepstrum,biasThr,distThr)
     return 0
-
+#第一个返回值是进行拟合并过滤的返回值 第二个返回值是原始返回值（用于调试）
 def getPitch(dataClip,Fs,nfft):
     pitch=0
     dataClip[0:int(30*nfft/Fs)]=0
@@ -175,14 +175,22 @@ def getPitch(dataClip,Fs,nfft):
     peaks.append(maxpos)
 
     #每做一次线性回归 找下一个峰
-    getNextPeaks(peaks,cepstrum,0.1,0.66)#递归求右侧波峰 
-    if len(peaks)>0:
+    getNextPeaks(peaks,cepstrum,0.1,0.66)#递归求右侧波峰
+    lenPeaks=len(peaks)
+    if lenPeaks>0:
         print(peaks)
     #plt.show()
-    if len(peaks)>1:
-        return Fs/2/peaks[0]
+    if lenPeaks>1:
+        #线性拟合求基频
+        harmonicIDs=np.arange(lenPeaks)+1#设置波峰ID
+        p0=[peaks[lenPeaks-1]/lenPeaks,0]#初始化参数
+        Xi=np.array(harmonicIDs)
+        Yi=np.array(peaks)
+        s="test"
+        para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
+        return [Fs/2/para[0][0],Fs/2/peaks[0]]
     else:
-        return 0
+        return [0,0]
 
            
     '''while pos<length:
@@ -196,7 +204,7 @@ def getPitch(dataClip,Fs,nfft):
     return pitch
     '''
 root_data_path = "/home/liningbo/文档/pyAudioAnalysis-master/tests/"
-class1_path="guqin1/"
+class1_path="guqin7/"
 class2_path="guqin2/"
 class1_list=os.listdir(root_data_path+class1_path)
 class1_listLen=len(class1_list)
@@ -256,11 +264,14 @@ for index in range(0,class1_listLen):
     pl=plt.figure(figsize=(12, 8))
     pre=0
     pitchs=[]
+    rawPitchs=[]
     for frame in np.arange(len(speech_stft)):
         dataClip=np.copy(speech_stft[frame])
         pitch=getPitch(dataClip,Fs,nfft)
-        pitchs.append(pitch)
+        pitchs.append(pitch[0])
+        rawPitchs.append(pitch[1])
     plt.plot(times,pitchs,label='pitch')
+    plt.plot(times,rawPitchs,label='rawPitch')
     plt.plot(times, MaxMinNormalization(rmse,0,np.max(pitchs)),label='rmse')
     plt.plot(times, -MaxMinNormalization(EE,0,np.max(pitchs))/2,label='- EE')
     plt.axhline(0, color='r', alpha=0.5)

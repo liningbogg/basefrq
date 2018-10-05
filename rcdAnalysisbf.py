@@ -11,7 +11,7 @@ import queue
 import math
 from scipy.optimize import leastsq
 root_data_path = "/home/liningbo/文档/pyAudioAnalysis-master/tests/"
-class1_path="guqin7/"
+class1_path="guqin1/"
 class2_path="guqin2/"
 class1_list=os.listdir(root_data_path+class1_path)
 class1_listLen=len(class1_list)
@@ -22,52 +22,71 @@ rmseS=1
 rmseDS=0
 EES=0
 EEDS=0
-showTestView=1
+showTestView=0
 def func(p,x):
-    k,b=p
-    return k*x+b
+    return p*x
  
-def error(p,x,y,s):
-    return func(p,x)-y #x、y都是列表，故返回值也是个列表
+def error(p,x,y):
+    return (func(p,x)-y)*(func(p,x)-y) #x、y都是列表，故返回值也是个列表
 
 def MaxMinNormalization(x,minv,maxv):
     Min=np.min(x)
     Max=np.max(x)
     y = (x - Min) / (Max - Min+0.0000000001)*(maxv-minv)+minv;
     return y
+#从fft上找出所有满足基频的波峰，并给出对应的谐波索引
+
 #递归算法求右侧波峰
-def getNextPeaks(peaks,cepstrum,biasThr,distThr):
+def getNextPeaks(peaks,cepstrum,biasThr,distThr,offset):
+    if offset==3:
+        return 0
     #最小二乘法预判右侧紧邻波峰
     lenPeaks=len(peaks)#波峰数量
     if lenPeaks>1:
-        harmonicIDs=np.arange(lenPeaks+1)+1#设置波峰ID
-        p0=[peaks[lenPeaks-1]/lenPeaks,0]#初始化参数
-        Xi=np.array(harmonicIDs[0:lenPeaks])
-        Yi=np.array(peaks)
-        s="test"
-        para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
-        nextPeakPos=int(para[0][0]*harmonicIDs[lenPeaks]+para[0][1])#下一个峰位置预测
+        #harmonicIDs=np.arange(lenPeaks+1)+1#设置波峰ID
+        p0=peaks[lenPeaks-1][1]/lenPeaks#初始化参数
+        Xi=np.array(peaks)[:,0]
+        Yi=np.array(peaks)[:,1]
+        para=leastsq(error,p0,args=(Xi,Yi)) #把error函数中除了p以外的参数打包到args中
+        nextPeakPos=int(para[0]*(offset+peaks[lenPeaks-1][0]+1))#下一个峰位置预测
     else:
-        nextPeakPos=2*peaks[0]        
-    rad=int((nextPeakPos-peaks[lenPeaks-1])/2)#搜索波峰半径
+        nextPeakPos=(2+offset)*peaks[0][1]
+    rad=int((nextPeakPos-peaks[lenPeaks-1][1])/(offset+1)/2)#搜索波峰半径
+    
+    
+    biasThrABS=max(7,rad*biasThr)
+    
     if nextPeakPos>(len(cepstrum)-rad):
         return 0;
-    #print(nextPeakPos-rad,nextPeakPos+rad)
+    
     nextMaxpos=np.argmax(cepstrum[nextPeakPos-rad:nextPeakPos+rad])+nextPeakPos-rad#下一个波峰检测到的位置
-    bias=abs(nextMaxpos-nextPeakPos)/rad#计算波峰偏离
+    #print([peaks,offset,nextPeakPos,rad,abs(nextMaxpos-nextPeakPos),biasThrABS])
+    bias=abs(nextMaxpos-nextPeakPos)#计算波峰偏离
     #判断检测到打波峰位置跟预测的是否一致
-    if bias<0.1:
-        trough=np.min(cepstrum[peaks[lenPeaks-1]:nextMaxpos])#波谷检测
-        dist=(cepstrum[nextMaxpos]-trough)/(cepstrum[peaks[lenPeaks-1]]-trough)#海拔高度检测
-        if dist>0.20:#宽松判别条件
-            peaks.append(nextMaxpos)
-            getNextPeaks(peaks,cepstrum,biasThr,distThr)
+    if bias<biasThrABS:
+        trough=np.min(cepstrum[int(peaks[lenPeaks-1][1]+offset*(nextMaxpos-peaks[lenPeaks-1][1])/(offset+1)):nextMaxpos])#波谷检测
+        dist=(cepstrum[nextMaxpos]-trough)/(cepstrum[peaks[lenPeaks-1][1]]-trough)#海拔高度检测
+        distThrABS=distThr*(0.7**offset)
+        minValTest=np.min(cepstrum[int(nextMaxpos-rad):int(nextMaxpos+rad)])
+        minPosTest=np.argmin(cepstrum[int(nextMaxpos-rad):int(nextMaxpos+rad)])+int(nextMaxpos-rad)
+        if minPosTest>nextMaxpos:
+            prot=(cepstrum[nextMaxpos]-minValTest)/(np.sum(cepstrum[nextMaxpos:minPosTest+1]-minValTest))*(minPosTest-nextMaxpos+1)
+        else:
+            prot=(cepstrum[nextMaxpos]-minValTest)/(np.sum(cepstrum[minPosTest:nextMaxpos+1]-minValTest))*(-minPosTest+nextMaxpos+1)
+        if dist>distThrABS and prot>1.667:#宽松判别条件
+            peaks.append([offset+peaks[len(peaks)-1][0]+1,nextMaxpos])
+            if len(peaks)<10:
+                getNextPeaks(peaks,cepstrum,biasThr,distThr,0)
+        else:
+            getNextPeaks(peaks,cepstrum,biasThr,distThr,offset+1)
+    else:
+        getNextPeaks(peaks,cepstrum,biasThr,distThr,offset+1)
     return 0
-#第一个返回值是进行拟合并过滤的返回值 第二个返回值是原始返回值（用于调试）
+#第一个是根据fft波峰拟合的返回值 第二个返回值是进行拟合并过滤的返回值 第三个返回值是原始返回值（用于调试）
 def getPitch(dataClip,Fs,nfft):
     pitch=0
     dataClip[0:int(30*nfft/Fs)]=0
-    print(frame*nfft/Fs) #当前时刻
+    #print(frame*nfft/Fs) #当前时刻
     fftData=fft(dataClip)[0:int(len(dataClip)/2)]
     if showTestView: 
         plt.subplot(121)
@@ -100,13 +119,12 @@ def getPitch(dataClip,Fs,nfft):
             #四分检测
             
             fourPos1=int(simiMax/2)#四分之一峰
-            p0=[fourPos1,0]
+            p0=fourPos1
             Xi=np.array([2,4])
             Yi=np.array([simiMax,maxpos])
-            s="test"
-            para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
-            fourPos1=int(para[0][0]+para[0][1])
-            fourPos2=int(para[0][0]*3+para[0][1])
+            para=leastsq(error,p0,args=(Xi,Yi)) #把error函数中除了p以外的参数打包到args中
+            fourPos1=int(para[0])
+            fourPos2=int(para[0]*3)
             rad=int(fourPos1/2)
             
             fourMax1=np.argmax(cepstrum[fourPos1-rad:fourPos1+rad])+fourPos1-rad#四分峰位置1
@@ -124,11 +142,11 @@ def getPitch(dataClip,Fs,nfft):
                     bias=abs(fourPos2-fourMax2)/rad#偏离度10%
                     if bias<0.2:
                         #添加四分峰
-                        peaks.append(fourMax1)
-                        peaks.append(simiMax)
-                        peaks.append(fourMax2)
+                        peaks.append([len(peaks)+1,fourMax1])
+                        peaks.append([len(peaks)+1,simiMax])
+                        peaks.append([len(peaks)+1,fourMax2])
             if len(peaks)<1:
-                peaks.append(simiMax)
+                peaks.append([len(peaks)+1,simiMax])
             
     #不存在半峰才检测三分峰         
     if len(peaks)<1:
@@ -151,12 +169,11 @@ def getPitch(dataClip,Fs,nfft):
                 #寻找1 如果寻找不到1 则取消2
                 thd1=thrMax
                 #三分峰2检测 （做回归）
-                p0=[maxpos/3,0]
+                p0=maxpos/3
                 Xi=np.array([2,3])
                 Yi=np.array([thd1,maxpos])
-                s="test"
-                para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
-                thrPos2=int(para[0][0]*1+para[0][1])
+                para=leastsq(error,p0,args=(Xi,Yi)) #把error函数中除了p以外的参数打包到args中
+                thrPos2=int(para[0]*1)
                 rad=int((thd1-thrPos2)/2)
                 #print(rad)
                 #print(thrPos2)
@@ -181,29 +198,29 @@ def getPitch(dataClip,Fs,nfft):
                     thd1=0
                     thd2=0
         if thd1>0:
-             peaks.append(thd2)
-             peaks.append(thd1)
+             peaks.append([len(peaks)+1,thd2])
+             peaks.append([len(peaks)+1,thd1])
              #print(thd1)
              #print(thd2)
-    peaks.append(maxpos)
-
+    peaks.append([len(peaks)+1,maxpos])
     #每做一次线性回归 找下一个峰
-    getNextPeaks(peaks,cepstrum,0.1,0.66)#递归求右侧波峰
+    getNextPeaks(peaks,cepstrum,0.1,0.25,0)#递归求右侧波峰
     lenPeaks=len(peaks)
     if showTestView:
         if lenPeaks>0:
             print(peaks)
-        plt.show()
+        
     if lenPeaks>1:
         #线性拟合求基频
-        harmonicIDs=np.arange(lenPeaks)+1#设置波峰ID
-        p0=[peaks[lenPeaks-1]/lenPeaks,0]#初始化参数
-        Xi=np.array(harmonicIDs)
-        Yi=np.array(peaks)
-        s="test"
-        para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
-        return [Fs/2/para[0][0],Fs/2/peaks[0]]
+        #harmonicIDs=np.arange(lenPeaks)+1#设置波峰ID
+        p0=peaks[lenPeaks-1][1]/lenPeaks#初始化参数
+        Xi=np.array(peaks)[:,0]
+        Yi=np.array(peaks)[:,1]
+        para=leastsq(error,p0,args=(Xi,Yi)) #把error函数中除了p以外的参数打包到args中
+        
+        return [Fs/2/para[0],Fs/2/peaks[0][1]]
     else:
+        #plt.show()
         return [0,0]
 
 
@@ -219,7 +236,7 @@ for index in range(0,class1_listLen):
     times = librosa.frames_to_time(np.arange(len(rmse)),sr=Fs,hop_length=nfft,n_fft=nfft)
     plt.figure(figsize=(12, 4))
     if rmseS==1:
-        plt.plot(times, MaxMinNormalization(rmse,0,1)) 
+        plt.plot(times, MaxMinNormalization(np.log(rmse),0,1)) 
         #plt.axhline(0.001, color='r', alpha=0.5)
         plt.xlabel('Time')
         plt.ylabel('RMSE')

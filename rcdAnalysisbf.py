@@ -10,7 +10,19 @@ from scipy.fftpack import fft,ifft
 import queue
 import math
 from scipy.optimize import leastsq
-
+root_data_path = "/home/liningbo/文档/pyAudioAnalysis-master/tests/"
+class1_path="guqin7/"
+class2_path="guqin2/"
+class1_list=os.listdir(root_data_path+class1_path)
+class1_listLen=len(class1_list)
+class_db="./class1.txt"
+Fs=44100
+nfft=int(4410)
+rmseS=1
+rmseDS=0
+EES=0
+EEDS=0
+showTestView=1
 def func(p,x):
     k,b=p
     return k*x+b
@@ -40,7 +52,7 @@ def getNextPeaks(peaks,cepstrum,biasThr,distThr):
     rad=int((nextPeakPos-peaks[lenPeaks-1])/2)#搜索波峰半径
     if nextPeakPos>(len(cepstrum)-rad):
         return 0;
-    print(nextPeakPos-rad,nextPeakPos+rad)
+    #print(nextPeakPos-rad,nextPeakPos+rad)
     nextMaxpos=np.argmax(cepstrum[nextPeakPos-rad:nextPeakPos+rad])+nextPeakPos-rad#下一个波峰检测到的位置
     bias=abs(nextMaxpos-nextPeakPos)/rad#计算波峰偏离
     #判断检测到打波峰位置跟预测的是否一致
@@ -55,14 +67,15 @@ def getNextPeaks(peaks,cepstrum,biasThr,distThr):
 def getPitch(dataClip,Fs,nfft):
     pitch=0
     dataClip[0:int(30*nfft/Fs)]=0
-    print(frame*nfft/Fs)
-    
-    #plt.subplot(121)
-    #plt.plot(np.arange(len(dataClip)), dataClip)
-    #plt.subplot(122)
-    
-    cepstrum=np.abs(fft(dataClip))[0:int(len(dataClip)/2)]
-    #plt.plot(np.arange(len(cepstrum)), cepstrum)
+    print(frame*nfft/Fs) #当前时刻
+    fftData=fft(dataClip)[0:int(len(dataClip)/2)]
+    if showTestView: 
+        plt.subplot(121)
+        plt.plot(np.arange(len(dataClip)), dataClip)
+    cepstrum=np.abs(fftData)*2/nfft
+    if showTestView:
+        plt.subplot(122)
+        plt.plot(np.arange(len(cepstrum)), cepstrum)
     
     length=len(cepstrum)
     cutoff=int(Fs/2/800)
@@ -145,11 +158,11 @@ def getPitch(dataClip,Fs,nfft):
                 para=leastsq(error,p0,args=(Xi,Yi,s)) #把error函数中除了p以外的参数打包到args中
                 thrPos2=int(para[0][0]*1+para[0][1])
                 rad=int((thd1-thrPos2)/2)
-                print(rad)
-                print(thrPos2)
+                #print(rad)
+                #print(thrPos2)
                 thrMax2=np.argmax(cepstrum[thrPos2-rad:thrPos2+rad])+thrPos2-rad#三分峰位置
                 bias=abs(thrPos2-thrMax2)/rad#偏离度10%
-                print(bias)
+                #print(bias)
                 if bias<0.2:
                     #与2/3峰之间的最小值
                     thrMin2=np.min(cepstrum[thrMax2:thrMax])
@@ -170,16 +183,17 @@ def getPitch(dataClip,Fs,nfft):
         if thd1>0:
              peaks.append(thd2)
              peaks.append(thd1)
-             print(thd1)
-             print(thd2)
+             #print(thd1)
+             #print(thd2)
     peaks.append(maxpos)
 
     #每做一次线性回归 找下一个峰
     getNextPeaks(peaks,cepstrum,0.1,0.66)#递归求右侧波峰
     lenPeaks=len(peaks)
-    if lenPeaks>0:
-        print(peaks)
-    #plt.show()
+    if showTestView:
+        if lenPeaks>0:
+            print(peaks)
+        plt.show()
     if lenPeaks>1:
         #线性拟合求基频
         harmonicIDs=np.arange(lenPeaks)+1#设置波峰ID
@@ -192,32 +206,9 @@ def getPitch(dataClip,Fs,nfft):
     else:
         return [0,0]
 
-           
-    '''while pos<length:
-        maxpos=np.argmax(cepstrum[pos:-1])+pos
-        print(maxpos)
-        
-        pos=maxpos+1
-        plt.show()
-        pitch=Fs/maxpos/2
-        break
-    return pitch
-    '''
-root_data_path = "/home/liningbo/文档/pyAudioAnalysis-master/tests/"
-class1_path="guqin7/"
-class2_path="guqin2/"
-class1_list=os.listdir(root_data_path+class1_path)
-class1_listLen=len(class1_list)
-class_db="./class1.txt"
-Fs=44100
-nfft=int(4410)
-rmseS=1
-rmseDS=0
-EES=0
-EEDS=0
+
 for index in range(0,class1_listLen):
     print(class1_list[index])
-    
     stream=librosa.load(root_data_path + class1_path+class1_list[index],mono=False,sr=None)
     x=stream[0]    
     plt.plot(x[0]);plt.xlabel('sample'); plt.ylabel('amp');
@@ -261,6 +252,7 @@ for index in range(0,class1_listLen):
         plt.tight_layout()
    
     speech_stft=np.transpose(speech_stft)
+    
     pl=plt.figure(figsize=(12, 8))
     pre=0
     pitchs=[]

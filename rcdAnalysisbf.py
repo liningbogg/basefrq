@@ -10,33 +10,51 @@ from scipy.fftpack import fft,ifft
 import queue
 import math
 from scipy.optimize import leastsq
-root_data_path = "/home/liningbo/文档/pyAudioAnalysis-master/tests/"
-class1_path="guqin1/"
-class2_path="guqin2/"
-class1_list=os.listdir(root_data_path+class1_path)
+from scipy import signal
+from findPeaks import findpeaks
+#root_data_path = "/home/liningbo/文档/pyAudioAnalysis-master/tests/"
+class1_path="guqin6/"
+class2_path="guqin2/"#暂时没用到
+class1_list=os.listdir(class1_path)
 class1_listLen=len(class1_list)
 class_db="./class1.txt"
 Fs=44100
-nfft=int(4410)
-rmseS=1
-rmseDS=0
-EES=0
-EEDS=0
-showTestView=0
+nfft=int(4410)#窗口尺寸
+hopLength=int(nfft)#步长
+rmseS=1#是否显示瞬时能量
+rmseDS=0#瞬时能量diff
+EES=1#是否显示谱熵
+EEDS=1
+STE=0
+showTestView=0#是否逐帧显示fft过程,需要把所有弹出窗口均关闭，然后关闭一个fft窗口 就会弹出下一个（只会这么整了）
+#短时瞬间能量（没有用上，用了RMSE）
+def ShortTimeEnergy(seq,nfft,hopLen):   
+    frameNum=math.ceil(len(seq)/hopLen)#计算帧数
+    rs=np.zeros(frameNum)
+    for i in range(0,frameNum):
+        rs[i]=np.sum(seq[i*hopLen:(i*hopLen+nfft)]**2)
+    rs=MaxMinNormalization(rs,0,1)
+    return rs
+#用于线性拟合的函数
 def func(p,x):
     return p*x
- 
 def error(p,x,y):
-    return (func(p,x)-y)*(func(p,x)-y) #x、y都是列表，故返回值也是个列表
-
+    return (func(p,x)-y)*(func(p,x)-y) 
+#累加函数
+def acc(arr):
+    rs=np.copy(arr)
+    tmp=0
+    for i in range(0,len(arr)):
+       rs[i]=sum(arr[i-5:i])
+    return rs
+#归一化函数
 def MaxMinNormalization(x,minv,maxv):
     Min=np.min(x)
     Max=np.max(x)
     y = (x - Min) / (Max - Min+0.0000000001)*(maxv-minv)+minv;
     return y
-#从fft上找出所有满足基频的波峰，并给出对应的谐波索引
-
-#递归算法求右侧波峰
+#递归算法求二次频谱的右侧波峰
+#offset：如果值为0 则说明是正常寻找波峰 如果offset>1 那么说明之前连续offset次没有找到相应位置的波峰 做多允许连续2个波峰位置不存在
 def getNextPeaks(peaks,cepstrum,biasThr,distThr,offset):
     if offset==3:
         return 0
@@ -52,13 +70,10 @@ def getNextPeaks(peaks,cepstrum,biasThr,distThr,offset):
     else:
         nextPeakPos=(2+offset)*peaks[0][1]
     rad=int((nextPeakPos-peaks[lenPeaks-1][1])/(offset+1)/2)#搜索波峰半径
-    
-    
     biasThrABS=max(7,rad*biasThr)
-    
+    #超出边界则完成搜索
     if nextPeakPos>(len(cepstrum)-rad):
         return 0;
-    
     nextMaxpos=np.argmax(cepstrum[nextPeakPos-rad:nextPeakPos+rad])+nextPeakPos-rad#下一个波峰检测到的位置
     #print([peaks,offset,nextPeakPos,rad,abs(nextMaxpos-nextPeakPos),biasThrABS])
     bias=abs(nextMaxpos-nextPeakPos)#计算波峰偏离
@@ -73,10 +88,12 @@ def getNextPeaks(peaks,cepstrum,biasThr,distThr,offset):
             prot=(cepstrum[nextMaxpos]-minValTest)/(np.sum(cepstrum[nextMaxpos:minPosTest+1]-minValTest))*(minPosTest-nextMaxpos+1)
         else:
             prot=(cepstrum[nextMaxpos]-minValTest)/(np.sum(cepstrum[minPosTest:nextMaxpos+1]-minValTest))*(-minPosTest+nextMaxpos+1)
-        if dist>distThrABS and prot>1.667:#宽松判别条件
+        #判断是否符合作为波峰的条件
+        #宽松判别条件 此后要改为依据波峰检测结果确定是否为新的峰值（波峰检测算法已经列出，根据距离高度寻峰）
+        if dist>distThrABS and prot>1.667:
             peaks.append([offset+peaks[len(peaks)-1][0]+1,nextMaxpos])
             if len(peaks)<10:
-                getNextPeaks(peaks,cepstrum,biasThr,distThr,0)
+                getNextPeaks(peaks,cepstrum,biasThr,distThr,0)#找到10个波峰即可退出程序
         else:
             getNextPeaks(peaks,cepstrum,biasThr,distThr,offset+1)
     else:
@@ -91,13 +108,24 @@ def getPitch(dataClip,Fs,nfft):
     if showTestView: 
         plt.subplot(121)
         plt.plot(np.arange(len(dataClip)), dataClip)
-    cepstrum=np.abs(fftData)*2/nfft
+    cepstrum=MaxMinNormalization(np.abs(fftData)*2/nfft,0,1)
+    cutoff=int(Fs/2/1200)
+    #cepstrum[0:cutoff]=0
+    cepstrum=MaxMinNormalization(cepstrum,0,1)
     if showTestView:
         plt.subplot(122)
         plt.plot(np.arange(len(cepstrum)), cepstrum)
-    
+   
     length=len(cepstrum)
-    cutoff=int(Fs/2/800)
+    peakind = signal.find_peaks_cwt(cepstrum, np.arange(1,20))
+    peakind2=findpeaks(cepstrum, spacing=15, limit=0.05)
+    if showTestView==1:
+        print(peakind)
+        print(peakind2)
+    # 把 corlor 设置为空，通过edgecolors来控制颜色
+    if showTestView==1:
+        plt.scatter(peakind2, cepstrum[peakind2], color='', marker='o', edgecolors='r', s=100)
+    
     peaks=[]
     pos=cutoff
     maxpos=np.argmax(cepstrum[pos:-1])+pos#最高峰位置
@@ -147,7 +175,6 @@ def getPitch(dataClip,Fs,nfft):
                         peaks.append([len(peaks)+1,fourMax2])
             if len(peaks)<1:
                 peaks.append([len(peaks)+1,simiMax])
-            
     #不存在半峰才检测三分峰         
     if len(peaks)<1:
         thd1=0#第一个三分峰的位置
@@ -203,73 +230,75 @@ def getPitch(dataClip,Fs,nfft):
              #print(thd1)
              #print(thd2)
     peaks.append([len(peaks)+1,maxpos])
-    #每做一次线性回归 找下一个峰
+    #每做一次线性回归 找下一个峰，直至找出右侧所有峰位置
     getNextPeaks(peaks,cepstrum,0.1,0.25,0)#递归求右侧波峰
     lenPeaks=len(peaks)
     if showTestView:
         if lenPeaks>0:
             print(peaks)
-        
+    rs=[]    
     if lenPeaks>1:
-        #线性拟合求基频
+        #线性拟合求基频，根据找到的所有二次fft峰求二次fft的基频，此基频求倒数然后乘以采样率就是原始信号的基频，对原始信号的高频部分分辨率不足
+        #，但原始信号高频部分在第一次fft中有好的频率分辨率，因此后期可以弥补
         #harmonicIDs=np.arange(lenPeaks)+1#设置波峰ID
         p0=peaks[lenPeaks-1][1]/lenPeaks#初始化参数
         Xi=np.array(peaks)[:,0]
         Yi=np.array(peaks)[:,1]
         para=leastsq(error,p0,args=(Xi,Yi)) #把error函数中除了p以外的参数打包到args中
-        
-        return [Fs/2/para[0],Fs/2/peaks[0][1]]
+        peaksfindWidth=int(nfft/2/para[0]*0.6)
+        peakindofFFT=findpeaks(dataClip, spacing=peaksfindWidth, limit=max(dataClip[int(30*nfft/Fs):-1])/10)
+        if showTestView==1:
+            plt.subplot(121)
+            plt.scatter(peakindofFFT, dataClip[peakindofFFT], color='', marker='o', edgecolors='r', s=100)
+            plt.show()
+        rs= [Fs/2/para[0],Fs/2/peaks[0][1]]
     else:
-        #plt.show()
-        return [0,0]
-
-
+        if lenPeaks==1:
+            if showTestView==1:
+                plt.show()
+            rs= [0,0]
+        else:
+            plt.show()
+            rs= [0,0]
+    return rs
+#程序流程
 for index in range(0,class1_listLen):
     print(class1_list[index])
-    stream=librosa.load(root_data_path + class1_path+class1_list[index],mono=False,sr=None)
+    stream=librosa.load(class1_path+class1_list[index],mono=False,sr=None)
     x=stream[0]    
     plt.plot(x[0]);plt.xlabel('sample'); plt.ylabel('amp');
-    speech_stft,phase = librosa.magphase(librosa.stft(x[0], n_fft=nfft, hop_length=nfft, window=scipy.signal.hamming))
+    speech_stft,phase = librosa.magphase(librosa.stft(x[0], n_fft=nfft, hop_length=hopLength, window=scipy.signal.hamming))
     plt.figure(figsize=(12, 4))
     plt.imshow(speech_stft[0:np.int(nfft/Fs*4000)])
-    rmse = librosa.feature.rmse(y=x[0],S=None,frame_length=nfft, hop_length=nfft, center=True, pad_mode='reflect')[0]
-    times = librosa.frames_to_time(np.arange(len(rmse)),sr=Fs,hop_length=nfft,n_fft=nfft)
+    rmse = librosa.feature.rmse(y=x[0],S=None,frame_length=nfft, hop_length=hopLength, center=True, pad_mode='reflect')[0]
+    times = librosa.frames_to_time(np.arange(len(rmse)),sr=Fs,hop_length=hopLength,n_fft=nfft)
+    rmse2 = librosa.feature.rmse(y=x[0],S=None,frame_length=nfft, hop_length=nfft, center=True, pad_mode='reflect')[0]
+    times2 = librosa.frames_to_time(np.arange(len(rmse2)),sr=Fs,hop_length=nfft,n_fft=nfft)
     plt.figure(figsize=(12, 4))
     if rmseS==1:
-        plt.plot(times, MaxMinNormalization(np.log(rmse),0,1)) 
-        #plt.axhline(0.001, color='r', alpha=0.5)
-        plt.xlabel('Time')
-        plt.ylabel('RMSE')
-        plt.axis('tight')
-        plt.tight_layout()
+        plt.plot(times, MaxMinNormalization((rmse),0,1),label='rmse_hop')
+        plt.plot(times2, MaxMinNormalization((rmse2),0,1),label='rmse')
+        
     speech_stft_Enp=speech_stft
     speech_stft_prob=speech_stft_Enp/np.sum(speech_stft_Enp,axis=0)
     EE=np.sum(-np.log(speech_stft_prob)*speech_stft_prob,axis=0)
     if EES==1:
-        plt.plot(times, MaxMinNormalization(EE,0,1))
-        plt.xlabel('Time')
-        plt.ylabel('EE')
-        plt.axis('tight')
-        plt.tight_layout()
+        plt.plot(times, MaxMinNormalization(EE,0,1),label='EE')
     EEdiff=np.diff(MaxMinNormalization(EE,0,1))
     EEdiff=np.insert(EEdiff,0,0,None)
+    EEdiffacc=acc(EEdiff)
     if EEDS==1:
         plt.plot(times, EEdiff)
-        plt.xlabel('Time')
-        plt.ylabel('EEDiff')
-        plt.axis('tight')
-        plt.tight_layout()
+        #plt.plot(times, EEdiffacc)
     RMSEdiff =np.diff(MaxMinNormalization(rmse,0,1))
     RMSEdiff=np.insert(RMSEdiff,0,0,None)
     if rmseDS==1:
         plt.plot(times, RMSEdiff)
-        plt.xlabel('Time')
-        plt.ylabel('EEDiff')
-        plt.axis('tight')
-        plt.tight_layout()
-   
+    ste=ShortTimeEnergy(x[0],nfft,hopLength)
+    if STE==1:
+        plt.plot(times, ste,label='STE')
+    plt.legend()
     speech_stft=np.transpose(speech_stft)
-    
     pl=plt.figure(figsize=(12, 8))
     pre=0
     pitchs=[]

@@ -112,7 +112,7 @@ def getScanDot(deSamp,height):
     return [x,height]
 #横向扫描求轮廓
 def getBaseLineFromScan(deSamp,num):
-    minval=min(deSamp)#最小值
+    minval=min(deSamp[20:-1])#最小值
     maxval=np.mean(deSamp[16:26])#最大值
     intercept=(maxval-minval)/1000.0
     heights=np.arange(minval+intercept,maxval,intercept)
@@ -186,12 +186,15 @@ def getPitch(dataClip,Fs,nfft):
         plt.subplot(236)
         plt.plot(np.arange(len(trueTrans)), trueTrans,label='trueTrans')
     pitch=max(trueTrans)/sum(dataClip)
+    #频率采样变换后寻峰
     combTransPeaks=findpeaks(trueTrans, spacing=peakSearchPixes, limit=max(trueTrans)*peakSearchAmp)
-    peaks=trueTrans[combTransPeaks]
+    peaks=trueTrans[combTransPeaks]#峰值大小
     maxindex=np.argmax(peaks)
-    maxfrq=combTransPeaks[maxindex]
+    maxfrq=combTransPeaks[maxindex]#最高峰值位置
+  
+    
     #寻找1hz以内的最大的峰
-    combThr=6*441000/Fs
+    combThr=6*441000/Fs#寻峰宽度
     decThr=0.75#递减阈值
     preBaseFrq=maxfrq
     for n in range(2,10,1):

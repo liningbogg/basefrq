@@ -166,7 +166,7 @@ def getPitch(dataClip,Fs,nfft,showTestView):
     decThr=0.75#递减阈值
     preBaseFrq=maxfrq
     for n in range(2,10,1):
-        newfrq=getNearPeaks(trueTrans,combTransPeaks,peaks,n*maxfrq,combThr,preBaseFrq,decThr)
+        newfrq=getNearPeaks(trueTrans,combTransPeaks,peaks,n*maxfrq,combThr,preBaseFrq,decThr,showTestView)
         if(newfrq>0):
             preBaseFrq=newfrq
         else:

@@ -22,9 +22,20 @@ from threading import Thread
 import time
 import baseFrqCombScan
 import baseFrqComb
+import pickle
 
-class1_path="guqin8/"
-class1_list=os.listdir(class1_path)
+#取得指定格式的dir列表
+def filterListDir(path,fmt):
+    dirList=os.listdir(path)
+    filteredList=[]
+    for name in dirList:
+        spilted=os.path.splitext(name)
+        if(spilted[1]==fmt):
+            filteredList.append(name)
+    return filteredList
+class1_path="guqin9/"
+target_path="guqin10/"
+class1_list=filterListDir(class1_path,'.flac')#暂时测试这一种格式
 class1_listLen=len(class1_list)
 class_db="./class1.txt"
 Fs=44100
@@ -38,8 +49,27 @@ EEDS=1
 MergeEEDS=1#融合区域后的EEDS
 showTestView=0#是否逐帧显示fft过程,需要把所有弹出窗口均关闭，然后关闭一个fft窗口 就会弹出下一个（只会这么整了）
 pitchExtend=4#为了标注音高延申的数据长度，单位秒
+#依据文件添加缓存数据
+def addChche(pitch,inputV,mediumV,initPos,length,file):
+    print(['test',length,initPos])
+    for i in np.arange(initPos,initPos+length):
+        try:
+            listV=pickle.load(file)
+            pitch[i]=listV[0]
+            inputV[i]=listV[1]
+            mediumV[i]=listV[2]
+            
+        except EOFError:
+            print('文件结束！')
+            break
+   
 
-
+#删去缓存
+def deleteCache(pitch,inputV,mediumV,initPos,length):
+    for i in np.arange(initPos,initPos+length):
+        pitch[i]=[]
+        inputV[i]=[]
+        mediumV[i]=[]
 #用于积分的累积求和
 def merge(src,rmse):
     x=np.copy(src)
@@ -54,15 +84,12 @@ def merge(src,rmse):
             #当前区域结束,设置区域值
             maxRmse=max(rmse[currentInit:i])
             maxEEPos=np.argmax(abs(x[currentInit:i]))+currentInit
-            x[currentInit:i]=currentSum
-            
+            x[currentInit:i]=currentSum        
             info.append([currentInit,i,currentSum,maxRmse,maxEEPos])
             currentSum=x[i]
-            currentInit=i
-            
+            currentInit=i        
         else:
-            currentSum=currentSum+x[i]
-            
+            currentSum=currentSum+x[i]     
     x[currentInit:-1]=currentSum#补充最后一组
     maxRmse=max(rmse[currentInit:i])
     info.append([currentInit,len(src),currentSum,maxRmse,maxEEPos])
@@ -84,15 +111,52 @@ def MaxMinNormalization(x,minv,maxv):
 #目标标记程序流程
 for index in range(0,class1_listLen):
     print(class1_list[index])
+   
+    referencePitch=[]
+    referencePitchInput=[]
+    referencePitchMedium=[]
+    referencePitchDeScan=[]
+    referencePitchDeScanInput=[]
+    referencePitchDeScanMedium=[]
+    
+    
     stream=librosa.load(class1_path+class1_list[index],mono=False,sr=Fs)#以Fs重新采样
+    baseName=os.path.splitext(class1_list[index])[0]
+    #标记记录文件名称
+    logName=class1_path+baseName+'_%d'%Fs+'_%d'%nfft+'_log'+'.txt'
+    #标记文件名称
+    targetName=class1_path+baseName+'_%d'%Fs+'_%d'%nfft+'_target'+'.txt'
+    #引入预处理文件前缀
+    pitchPrepPathDeScan=class1_path+baseName+'_%d'%Fs+'_%d/'%nfft+'_%d'%Fs+'_%d'%nfft+'_DeScan_'
+    pitchPrepPathComb=class1_path+baseName+'_%d'%Fs+'_%d/'%nfft+'_%d'%Fs+'_%d'%nfft+'_comb_'
+    #读入标记记录文件
+    logFile=open(logName,'w+')
+    #读入记录文件
+    targetFile=open(targetName,'w+')
+    
     x=stream[0]
     print('sampling rate:',stream[1])#采样率
     plt.plot(x[0]);plt.xlabel('sample'); plt.ylabel('amp');
     speech_stft,phase = librosa.magphase(librosa.stft(x[0], n_fft=nfft, hop_length=hopLength, window=scipy.signal.hamming))
-    plt.figure(figsize=(12, 4))
+    frameNum=len(speech_stft[0])
+    for i in np.arange(frameNum):
+        referencePitch.append([])
+        referencePitchInput.append([])
+        referencePitchMedium.append([])
+        referencePitchDeScan.append([])
+        referencePitchDeScanInput.append([])
+        referencePitchDeScanMedium.append([])
+    initFrame=logFile.readline()
+    if len(initFrame)==0:
+        initFrame=0
+        logFile.write('0\n')
+        logFile.flush()
+        
+    print(['初始位置:',initFrame])
+    input()
     
+    plt.figure(figsize=(12, 4))
     fftForPitch=np.copy(speech_stft[0:np.int(nfft/Fs*4000)])#4000hz以下信号用于音高检测
-    #plt.imshow(fftForPitch)
     librosa.display.specshow(fftForPitch,sr=Fs,hop_length=nfft)
     rmse = librosa.feature.rmse(y=x[0],S=None,frame_length=nfft, hop_length=hopLength, center=True, pad_mode='reflect')[0]
     times = librosa.frames_to_time(np.arange(len(rmse)),sr=Fs,hop_length=hopLength,n_fft=nfft)
@@ -122,23 +186,11 @@ for index in range(0,class1_listLen):
     RMSEdiff=np.insert(RMSEdiff,0,0,None)
     if rmseDS==1:
         plt.plot(times, RMSEdiff)
-    '''
-    mergeEED=merge(EEdiff,rmse)[0]#融合区域后的EED
-    mergeInfo=np.array(merge(EEdiff,rmse)[1])
-    mergeamp=mergeInfo[:,2]
-    mergeInit=mergeInfo[:,0]
-    mergeInit=mergeInit.astype(np.int32)
-    '''
-    [mergeEED,mergeEEDINFO]=np.array(merge(EEdiff,rmse))
-    
-    #print(mergeEEDINFO)
-    '''clipStop=mergeInfo[np.where(mergeamp>0.1)][:,0]
-    clipStart=mergeInfo[np.where(mergeamp<-0.2 )][:,0]
-    clipStart=clipStart.astype(np.int32)
-    '''
+   
+    [mergeEED,mergeEEDINFO]=np.array(merge(EEdiff,rmse))    
     
     clipStop=[i for i in mergeEEDINFO  if (i[2]>0.15 ) ]
-    clipStart=[i for i in mergeEEDINFO  if (i[2]<-0.2 and i[3]>0.2) ]
+    clipStart=[i for i in mergeEEDINFO  if (i[2]<-0.15 and i[3]>0.2) ]
    
     if MergeEEDS==1:
         plt.plot(times, mergeEED,label='MEEDS')
@@ -151,81 +203,99 @@ for index in range(0,class1_listLen):
     extendFrames=int(pitchExtend*Fs/nfft)#向前扩展的帧数
     plt.figure()
     speech_stft_pitch=np.copy(speech_stft)#求音高用短时傅里叶频谱
-    #speech_stft_pitch=np.transpose(speech_stft_pitch)
-    #print(len(speech_stft_pitch))
-    #预先求一部分音高参考标签
-    #用于标记的不去扫描线的音高
-    referencePitch=[]
-    referencePitchDeScanOri=[]
-    #用于标记的去扫描线的音高
-    '''for frm in np.arange(extendFrames+1):
-        clipForPitch=np.copy(speech_stft_pitch[frm])
-        referencePitchDeScanOri.append(baseFrqCombScan.getPitchDeScan(clipForPitch,Fs,nfft,0))
-        referencePitch.append(baseFrqComb.getPitch(clipForPitch,Fs,nfft,0))'''
-
-    
-    #print(referencePitchDeScan)
-    for frame in np.arange(len(speech_stft)):
-        if frame>55:
-            print([frame*nfft/Fs,"%.2f"%(frame/len(speech_stft)*100.0)]) #当前时刻
-            dataClip=np.copy(speech_stft[frame])
-            dataClip[0:int(30*nfft/Fs)]=0#清零30hz以下信号
-            #线性内插重新采样
-            processingX=np.arange(0,int(nfft/Fs*4000))#最大采集到4000Hz,不包括最大值，此处为尚未重采样的原始频谱
-            processingY=dataClip[processingX]#重采样的fft
-            lenProcessingX=len(processingX)#待处理频谱长度
-            finterp=interp1d(processingX,processingY,kind='linear')#线性内插配置
-            x_pred=np.linspace(0,processingX[lenProcessingX-1]*1.0,int(processingX[lenProcessingX-1]*441000/nfft)+1)
-            maxProcessingX=x_pred[len(x_pred)-1]
-            resampY=finterp(x_pred)
-            lenResampY=len(resampY)
-            #显示局部输入数据，便于人工标记
-            #初步设置显示2s以内的数据
-            extendClips=np.arange(max(0,frame-extendFrames),frame+extendFrames)#延长的帧ID
-            for extendFrm in np.arange(len(referencePitchDeScanOri),frame+extendFrames):
-                clipForPitch=np.copy(speech_stft_pitch[extendFrm])
-                referencePitchDeScanOri.append(baseFrqCombScan.getPitchDeScan(clipForPitch,Fs,nfft,0))
-                referencePitch.append(baseFrqComb.getPitch(clipForPitch,Fs,nfft,0))
-            referencePitchDeScan=[x[0] for x in referencePitchDeScanOri]
-            referencePitchDeScanInput=[x[1] for x in referencePitchDeScanOri]
-            referencePitchDeScanMedium=[x[2] for x in referencePitchDeScanOri]
-            referenceRmse=np.copy(rmse[extendClips])
-            referenceEE=np.copy(EE[extendClips])
-            referenceMEED=np.copy(mergeEED[extendClips])
-            referenceMEED=np.insert(referenceMEED,0,0,None)
-            referenceTimes=librosa.frames_to_time(extendClips,sr=Fs,hop_length=hopLength,n_fft=nfft)-0.05
-            plt.close()
-            plt.subplot(221)
-            plt.plot(referenceTimes, referenceRmse,label='rmse')
-            plt.plot(referenceTimes, referenceEE,label='EE')
-            plt.plot(referenceTimes, referenceMEED[0:len(referenceTimes)],label='MEED')
-            plt.axvline((frame)*hopLength/Fs,color='r')
-            plt.axhline(0,color='r')
-
-            plt.annotate('%.2f'%  EE[frame], xy = (frame, EE[frame]), xytext = ((frame-0.5)*hopLength/Fs,EE[frame]))
-            plt.annotate('%.2f'%  rmse[frame], xy = (frame, rmse[frame]), xytext = ((frame-0.5)*hopLength/Fs,rmse[frame]))
-            plt.legend()
-            plt.subplot(223)
-            plt.axvline((frame)*hopLength/Fs,color='r')
-            plt.axhline(0,color='r')
-            currentClipStart=np.array([i[4] for i in clipStart  if (i[0]<frame+extendFrames and i[0]>frame-extendFrames) ])
-            currentClipStart=currentClipStart.astype(np.int32)
-            for startPos in currentClipStart:
-                plt.axvline((startPos)*hopLength/Fs,color='b')
-                plt.annotate('(%.2f,%.2f)'  %(startPos ,referencePitchDeScan[startPos]), xy = ((startPos-0.5)*hopLength/Fs, referencePitchDeScan[startPos]), xytext = ((startPos-0.5)*hopLength/Fs,referencePitchDeScan[startPos]))
-            currentClipStop=np.array([i[4] for i in clipStop  if (i[0]<frame+extendFrames and i[0]>frame-extendFrames) ])
-            currentClipStop=currentClipStop.astype(np.int32)
-            for stopPos in currentClipStop:
-                plt.axvline((stopPos)*hopLength/Fs,color='r')
-            plt.plot(referenceTimes, referencePitchDeScan[max(0,frame-extendFrames):frame+extendFrames],label='pitchDeScan')
-            plt.plot(referenceTimes, referencePitch[max(0,frame-extendFrames):frame+extendFrames],label='pitch')
-            plt.legend()
-            plt.subplot(222)
-            plt.plot(np.arange(len(referencePitchDeScanInput[frame])),referencePitchDeScanInput[frame])
-            plt.subplot(224)
-            plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame])
-            plt.show()
-            pitchinfo=input("pitch:")
+    framePerFile=int(60*Fs/nfft)#1分钟每个文件
+    cacheFile=[]
+    frame=0
+    stopFile=math.ceil(len(speech_stft)*1.0/framePerFile)
+    while(frame<len(speech_stft)):
+        print([frame*nfft/Fs,"%.2f"%(frame/len(speech_stft)*100.0)]) #当前时刻
+        print(frame)  
+        currentID=int(frame/framePerFile)
+        #如果当前帧导致文件替换则更新先关音高缓存数据
+        newSet=np.arange(currentID-1,currentID+2)#当前应该设置的缓存文件集合
+        newSet=[i for i in newSet if (i>-1 and i<stopFile)]#应该添加的缓存文件
+        addSet=[i for i in newSet if (i not in cacheFile and i>-1 and i<stopFile)]#应该添加的缓存文件
+        
+        if addSet!=[]:
+            #添加缓存
+            for i in addSet:
+                initPos=i*framePerFile
+                length=framePerFile
+                file=open(pitchPrepPathComb+'%02d'%i+'.txt','rb')
+                print(pitchPrepPathComb+'%02d'%i+'.txt')
+                addChche(referencePitch,referencePitchInput,referencePitchMedium,initPos,length,file)#通过文件增加缓存并做校验
+                file.close()
+                file =open(pitchPrepPathDeScan+'%02d'%i+'.txt','rb')
+                addChche(referencePitchDeScan,referencePitchDeScanInput,referencePitchDeScanMedium,initPos,length,file)#通过文件增加缓存并做校验
+                file.close()
+        deleteSet=[i for i in cacheFile if i not in newSet]#应该删去的缓存
+        
+        if deleteSet!=[]:
+            #删除缓存
+            for i in deleteSet:
+                initPos=i*framePerFile
+                length=framePerFile
+                deleteCache(referencePitch,referencePitchInput,referencePitchMedium,initPos,length)#删除缓存
+                deleteCache(referencePitchDeScan,referencePitchDeScanInput,referencePitchDeScanMedium,initPos,length)#删除缓存
+        cacheFile= newSet
+        print(cacheFile)
+        dataClip=np.copy(speech_stft[frame])
+        dataClip[0:int(30*nfft/Fs)]=0#清零30hz以下信号
+        #线性内插重新采样
+        processingX=np.arange(0,int(nfft/Fs*4000))#最大采集到4000Hz,不包括最大值，此处为尚未重采样的原始频谱
+        processingY=dataClip[processingX]#重采样的fft
+        lenProcessingX=len(processingX)#待处理频谱长度
+        finterp=interp1d(processingX,processingY,kind='linear')#线性内插配置
+        x_pred=np.linspace(0,processingX[lenProcessingX-1]*1.0,int(processingX[lenProcessingX-1]*441000/nfft)+1)
+        maxProcessingX=x_pred[len(x_pred)-1]
+        resampY=finterp(x_pred)
+        
+        lenResampY=len(resampY)
+        #显示局部输入数据，便于人工标记
+        #初步设置显示2s以内的数据
+        extendClips=np.arange(max(0,frame-extendFrames),frame+extendFrames)#延长的帧ID
+        
+        referenceRmse=np.copy(rmse[extendClips])
+        referenceEE=np.copy(EE[extendClips])
+        referenceMEED=np.copy(mergeEED[extendClips])
+        referenceMEED=np.insert(referenceMEED,0,0,None)
+        referenceTimes=librosa.frames_to_time(extendClips,sr=Fs,hop_length=hopLength,n_fft=nfft)-0.05
+        plt.close()
+        plt.subplot(221)
+        plt.plot(referenceTimes, referenceRmse,label='rmse')
+        plt.plot(referenceTimes, referenceEE,label='EE')
+        plt.plot(referenceTimes, referenceMEED[0:len(referenceTimes)],label='MEED')
+        plt.axvline((frame)*hopLength/Fs,color='r')
+        plt.axhline(0,color='r')
+        plt.annotate('%.2f'%  EE[frame], xy = (frame, EE[frame]), xytext = ((frame-0.5)*hopLength/Fs,EE[frame]))
+        plt.annotate('%.2f'%  rmse[frame], xy = (frame, rmse[frame]), xytext = ((frame-0.5)*hopLength/Fs,rmse[frame]))
+        plt.legend()
+        plt.subplot(223)
+        plt.axvline((frame)*hopLength/Fs,color='r')
+        plt.axhline(0,color='r')
+        currentClipStart=np.array([i[4] for i in clipStart  if (i[0]<frame+extendFrames and i[0]>frame-extendFrames) ])
+        currentClipStart=currentClipStart.astype(np.int32)
+        for startPos in currentClipStart:
+            plt.axvline((startPos-1)*hopLength/Fs,color='b')
+            plt.annotate('(%.2f,%.2f)'  %(startPos-1 ,referencePitchDeScan[startPos-1]),\
+                         xy = ((startPos-0.5-1)*hopLength/Fs, \
+                        referencePitchDeScan[startPos-1]),\
+                         xytext = ((startPos-0.5-1)*hopLength/Fs,referencePitchDeScan[startPos-1]))
+        currentClipStop=np.array([i[4] for i in clipStop  if (i[0]<frame+extendFrames and i[0]>frame-extendFrames) ])
+        currentClipStop=currentClipStop.astype(np.int32)
+        for stopPos in currentClipStop:
+            plt.axvline((stopPos-1)*hopLength/Fs,color='r')
+        plt.plot(referenceTimes, referencePitchDeScan[max(0,frame-extendFrames):frame+extendFrames],label='pitchDeScan')
+        plt.plot(referenceTimes, referencePitch[max(0,frame-extendFrames):frame+extendFrames],label='pitch')
+        plt.legend()
+        plt.subplot(222)
+        plt.plot(np.arange(len(referencePitchDeScanInput[frame])),referencePitchDeScanInput[frame])
+        plt.subplot(224)
+        plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame])
+        plt.show()
+        pitchinfo=input("pitch:")
+        frame=frame+600
+        
             
             
             

@@ -27,9 +27,19 @@ from threading import Thread
 import time
 import baseFrqCombScan
 import baseFrqComb
-
+import pickle
+#取得指定格式的dir列表
+def filterListDir(path,fmt):
+    dirList=os.listdir(path)
+    filteredList=[]
+    for name in dirList:
+        spilted=os.path.splitext(name)
+        if(spilted[1]==fmt):
+            filteredList.append(name)
+    return filteredList
+np.set_printoptions(threshold=np.nan,linewidth=np.nan) 
 class1_path="guqin8/"
-class1_list=os.listdir(class1_path)
+class1_list=filterListDir(class1_path,'.flac')
 class1_listLen=len(class1_list)
 targetPath="guqin9/"
 class_db="./class1.txt"
@@ -91,7 +101,7 @@ def MaxMinNormalization(x,minv,maxv):
 for index in range(0,class1_listLen):
     print(class1_list[index])
     startTime=datetime.now() 
-    baseName=targetPath+os.path.splitext(class1_list[index])[0]
+    baseName=os.path.splitext(class1_list[index])[0]
     stream=librosa.load(class1_path+class1_list[index],mono=False,sr=Fs)#以Fs重新采样
     
     x=stream[0]
@@ -100,32 +110,50 @@ for index in range(0,class1_listLen):
     speech_stft=np.transpose(speech_stft)
     referencePitch=[]
     referencePitchDeScan=[]
+    filePath=baseName+'_%d'%Fs+'_%d/'%nfft
+    isExists=os.path.exists(class1_path+filePath)
+    if not isExists:
+        # 如果不存在则创建目录
+        os.makedirs(class1_path+filePath) 
     #用于标记的去扫描线的音高
-    fileDescanName=baseName+'_%d'%Fs+'_%d'%nfft+'_descan'+'.txt'
-    fileCombName=baseName+'_%d'%Fs+'_%d'%nfft+'_comb'+'.txt'
+    #文件ID
+    fileID=0
+    framePerFile=int(60*Fs/nfft)#1分钟每个文件
+    print('%d frames per file.'%framePerFile)
+    fileDescan=0
+    fileDescanName=0
     for frame in np.arange(len(speech_stft)):
-        if frame>-1:
-            print([frame*nfft/Fs,"%.2f"%(frame/len(speech_stft)*100.0)]) #当前时刻
-            dataClip=np.copy(speech_stft[frame])
-            dataClip[0:int(30*nfft/Fs)]=0#清零30hz以下信号
-            referencePitchDeScan.append(baseFrqCombScan.getPitchDeScan \
-                                        (dataClip,Fs,nfft,showTestView))
-            referencePitch.append(baseFrqComb.getPitch(dataClip,Fs,nfft,showTestView))
-    
-    fileDescan=open(fileDescanName,'w')
-    fileDescan.write(str(referencePitchDeScan))
+        if frame%framePerFile==0:
+            fileDescanName=filePath+'_%d'%Fs+'_%d'%nfft+'_descan'+'_%02d'%fileID+'.txt'
+            fileCombName=filePath+'_%d'%Fs+'_%d'%nfft+'_comb'+'_%02d'%fileID+'.txt'
+            fileDescan=open((class1_path+fileDescanName),'wb')
+            fileComb=open((class1_path+fileCombName),'wb')
+        
+        print([frame*nfft/Fs,"%.2f"%(frame/len(speech_stft)*100.0)]) #当前时刻
+        dataClip=np.copy(speech_stft[frame])
+        dataClip[0:int(30*nfft/Fs)]=0#清零30hz以下信号
+        referencePitch=baseFrqComb.getPitch(dataClip,Fs,nfft,showTestView)
+        referencePitchDeScan=baseFrqCombScan.getPitchDeScan(dataClip,Fs,nfft,showTestView)
+        pickle.dump(referencePitchDeScan, fileDescan)
+        pickle.dump(referencePitch, fileComb)            
+        fileDescan.flush()
+        fileComb.flush()
+        if frame%framePerFile==(framePerFile-1):
+            fileDescan.close()
+            fileComb.close()
+            fileID=fileID+1
     fileDescan.close()
     print(fileDescanName+' 音高参考信息写入完毕')
-    fileComb=open(fileCombName,'w')
-    fileComb.write(str(referencePitch))
     fileComb.close()
+    fileID=fileID+1
     print(fileCombName+' 音高参考信息写入完毕')
     endTime=datetime.now()
     print('用时%d;'%(endTime-startTime).seconds \
           +'帧数:%d;'%len(speech_stft) \
           +'spf:%f;'%((endTime-startTime).seconds*1.0/len(speech_stft)) \
           +'speed:%f'%((endTime-startTime).seconds*1.0/(len(speech_stft))*Fs/nfft))
-    shutil.move(class1_path+class1_list[index],targetPath+class1_list[index])        
+    shutil.move(class1_path+class1_list[index],targetPath+class1_list[index])
+    shutil.move(class1_path+filePath,targetPath+filePath)
             
             
    

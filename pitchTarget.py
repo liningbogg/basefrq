@@ -23,6 +23,20 @@ import time
 import baseFrqCombScan
 import baseFrqComb
 import pickle
+import pyaudio 
+import wave
+
+#播放波形
+def playWave(data):
+    p=pyaudio.PyAudio()
+    stream=p.open(format=pyaudio.paInt16, channels=1, rate=Fs, output=True)
+    data=data.astype(np.int16)
+    stream.write(data)
+    stream.stop_stream()
+    #暂停
+    stream.close()
+    #关闭
+    p.terminate()
 
 #取得指定格式的dir列表
 def filterListDir(path,fmt):
@@ -33,7 +47,7 @@ def filterListDir(path,fmt):
         if(spilted[1]==fmt):
             filteredList.append(name)
     return filteredList
-class1_path="guqin9/"
+class1_path="guqin6/"
 target_path="guqin10/"
 class1_list=filterListDir(class1_path,'.flac')#暂时测试这一种格式
 class1_listLen=len(class1_list)
@@ -51,7 +65,6 @@ showTestView=0#是否逐帧显示fft过程,需要把所有弹出窗口均关闭�
 pitchExtend=4#为了标注音高延申的数据长度，单位秒
 #依据文件添加缓存数据
 def addChche(pitch,inputV,mediumV,initPos,length,file):
-    print(['test',length,initPos])
     for i in np.arange(initPos,initPos+length):
         try:
             listV=pickle.load(file)
@@ -81,20 +94,28 @@ def merge(src,rmse):
     info=[]
     for i in np.arange(length):
         if (currentSum*x[i])<0:
-            #当前区域结束,设置区域值
-            maxRmse=max(rmse[currentInit:i])
-            maxEEPos=np.argmax(abs(x[currentInit:i]))+currentInit
-            x[currentInit:i]=currentSum        
-            info.append([currentInit,i,currentSum,maxRmse,maxEEPos])
-            currentSum=x[i]
-            currentInit=i        
+            try:
+                #当前区域结束,设置区域值
+                maxRmse=max(rmse[currentInit:i])
+                maxEEPos=np.argmax(abs(x[currentInit:i]))+currentInit
+                x[currentInit:i]=currentSum        
+                info.append([currentInit,i,currentSum,maxRmse,maxEEPos])
+                currentSum=x[i]
+                currentInit=i
+            except Exception:
+                maxRmse =0
+                info.append([currentInit,len(src),currentSum,maxRmse,maxEEPos])
         else:
             currentSum=currentSum+x[i]     
     x[currentInit:-1]=currentSum#补充最后一组
-    maxRmse=max(rmse[currentInit:i])
+    try:
+        maxRmse=max(rmse[currentInit:i])
+    except Exception:
+        maxRmse =0
     info.append([currentInit,len(src),currentSum,maxRmse,maxEEPos])
     return [x,info]    
 
+         
 #用于线性拟合的函数
 def func(p,x):
     return p*x
@@ -109,9 +130,11 @@ def MaxMinNormalization(x,minv,maxv):
     return y
 
 #目标标记程序流程
+thrarta=0.15
+thrartb=0.2
+throp=0.15
 for index in range(0,class1_listLen):
     print(class1_list[index])
-   
     referencePitch=[]
     referencePitchInput=[]
     referencePitchMedium=[]
@@ -127,12 +150,11 @@ for index in range(0,class1_listLen):
     #标记文件名称
     targetName=class1_path+baseName+'_%d'%Fs+'_%d'%nfft+'_target'+'.txt'
     #引入预处理文件前缀
-    pitchPrepPathDeScan=class1_path+baseName+'_%d'%Fs+'_%d/'%nfft+'_%d'%Fs+'_%d'%nfft+'_DeScan_'
+    pitchPrepPathDeScan=class1_path+baseName+'_%d'%Fs+'_%d/'%nfft+'_%d'%Fs+'_%d'%nfft+'_descan_'
     pitchPrepPathComb=class1_path+baseName+'_%d'%Fs+'_%d/'%nfft+'_%d'%Fs+'_%d'%nfft+'_comb_'
     #读入标记记录文件
     logFile=open(logName,'w+')
-    #读入记录文件
-    targetFile=open(targetName,'w+')
+    
     
     x=stream[0]
     print('sampling rate:',stream[1])#采样率
@@ -153,7 +175,6 @@ for index in range(0,class1_listLen):
         logFile.flush()
         
     print(['初始位置:',initFrame])
-    input()
     
     plt.figure(figsize=(12, 4))
     fftForPitch=np.copy(speech_stft[0:np.int(nfft/Fs*4000)])#4000hz以下信号用于音高检测
@@ -189,8 +210,8 @@ for index in range(0,class1_listLen):
    
     [mergeEED,mergeEEDINFO]=np.array(merge(EEdiff,rmse))    
     
-    clipStop=[i for i in mergeEEDINFO  if (i[2]>0.15 ) ]
-    clipStart=[i for i in mergeEEDINFO  if (i[2]<-0.15 and i[3]>0.2) ]
+    clipStop=[i for i in mergeEEDINFO  if (i[2]>throp ) ]
+    clipStart=[i for i in mergeEEDINFO  if (i[2]<(-1*thrarta) and i[3]>thrartb) ]
    
     if MergeEEDS==1:
         plt.plot(times, mergeEED,label='MEEDS')
@@ -207,6 +228,11 @@ for index in range(0,class1_listLen):
     cacheFile=[]
     frame=0
     stopFile=math.ceil(len(speech_stft)*1.0/framePerFile)
+    #target文件
+    fileTarget=open(targetName,'ba')
+    #pickle.dump(referencePitch, fileTarget)            
+    #fileTarget.flush()
+    
     while(frame<len(speech_stft)):
         print([frame*nfft/Fs,"%.2f"%(frame/len(speech_stft)*100.0)]) #当前时刻
         print(frame)  
@@ -222,7 +248,6 @@ for index in range(0,class1_listLen):
                 initPos=i*framePerFile
                 length=framePerFile
                 file=open(pitchPrepPathComb+'%02d'%i+'.txt','rb')
-                print(pitchPrepPathComb+'%02d'%i+'.txt')
                 addChche(referencePitch,referencePitchInput,referencePitchMedium,initPos,length,file)#通过文件增加缓存并做校验
                 file.close()
                 file =open(pitchPrepPathDeScan+'%02d'%i+'.txt','rb')
@@ -238,7 +263,6 @@ for index in range(0,class1_listLen):
                 deleteCache(referencePitch,referencePitchInput,referencePitchMedium,initPos,length)#删除缓存
                 deleteCache(referencePitchDeScan,referencePitchDeScanInput,referencePitchDeScanMedium,initPos,length)#删除缓存
         cacheFile= newSet
-        print(cacheFile)
         dataClip=np.copy(speech_stft[frame])
         dataClip[0:int(30*nfft/Fs)]=0#清零30hz以下信号
         #线性内插重新采样
@@ -276,15 +300,16 @@ for index in range(0,class1_listLen):
         currentClipStart=np.array([i[4] for i in clipStart  if (i[0]<frame+extendFrames and i[0]>frame-extendFrames) ])
         currentClipStart=currentClipStart.astype(np.int32)
         for startPos in currentClipStart:
-            plt.axvline((startPos-1)*hopLength/Fs,color='b')
-            plt.annotate('(%.2f,%.2f)'  %(startPos-1 ,referencePitchDeScan[startPos-1]),\
-                         xy = ((startPos-0.5-1)*hopLength/Fs, \
-                        referencePitchDeScan[startPos-1]),\
+            #提前一格,防止起振阶段被忽略
+            plt.axvline((startPos-1)*hopLength/Fs,color='b',ls="--")
+            plt.annotate('(%.2f,%.2f)'%(startPos-1 ,referencePitchDeScan[startPos-1]),\
+                         xy = ((startPos-0.5-1)*hopLength/Fs,\
+                         referencePitchDeScan[startPos-1]),\
                          xytext = ((startPos-0.5-1)*hopLength/Fs,referencePitchDeScan[startPos-1]))
         currentClipStop=np.array([i[4] for i in clipStop  if (i[0]<frame+extendFrames and i[0]>frame-extendFrames) ])
         currentClipStop=currentClipStop.astype(np.int32)
         for stopPos in currentClipStop:
-            plt.axvline((stopPos-1)*hopLength/Fs,color='r')
+            plt.axvline((stopPos-1)*hopLength/Fs,color='r',ls="--")
         plt.plot(referenceTimes, referencePitchDeScan[max(0,frame-extendFrames):frame+extendFrames],label='pitchDeScan')
         plt.plot(referenceTimes, referencePitch[max(0,frame-extendFrames):frame+extendFrames],label='pitch')
         plt.legend()
@@ -293,9 +318,73 @@ for index in range(0,class1_listLen):
         plt.subplot(224)
         plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame])
         plt.show()
-        pitchinfo=input("pitch:")
-        frame=frame+600
         
+
+        pitchinfo=input("cmd:")
+        '''switch={
+            "dt":lambda frame:int(time*Fs/fft)
+        }'''
+        while True:
+            try:
+                cmds=pitchinfo.split(';')
+                for cmd in cmds:
+                    item =cmd.split()#命令行及其参数
+                    cmdstr=item[0]#命令字
+                    if cmdstr=="dt":
+                        time=int(item[1])
+                        if(time<=frame):
+                            YESNO=input("设置时间小于等于当前时间，是否确认修改？是键入Y,否则N:")
+                            if YESNO=="Y":
+                                frame=time#调整当前帧位置
+                            else:
+                                print("放弃当前设置")
+                        else:
+                            frame=time#调整当前帧位置
+                    if cmdstr=="thrart":
+                        a=float(item[1])
+                        b=float(item[2])
+                        if a>0:
+                            thrarta=a
+                        if b>0:
+                            thrartb=b
+                        #重新计算起始位置
+                        clipStart=[i for i in mergeEEDINFO  if (i[2]<(-1*thrarta) and i[3]>thrartb)]
+                    if cmdstr=="throp":
+                        thr=float(item[1])
+                        if thr>0:
+                            throp=thr
+                        clipStop=[i for i in mergeEEDINFO  if (i[2]>throp ) ]
+                    if cmdstr=="ef":
+                        extendFrames=int(item[1])
+                    if cmdstr=="pl":
+                        start=int(item[1])
+                        stop=int(item[2])
+                        data=np.copy(x[0][start*nfft:stop*nfft])
+                        data=data*65536/2
+                        playWave(data)
+                    if cmdstr=="pt":
+                        time=int(item[1])
+                        #如果time<0,认为自动移动一帧
+                        if time<=frame:
+                            time=frame+1
+                            print("time小于当前帧，自动移动一帧。")
+                        for i in np.arange(frame,time):
+                            src=np.copy(speech_stft[i])
+                            tar=item[2:]
+                            tar=[float(p) for p in tar]
+                            candidate=referencePitchDeScan[i]
+                            tar=np.array(tar)
+                            tar=np.where(tar<0.0,candidate,tar)#如果频率小于0则以候选频率替代
+                            targetItem=[src,tar]#待写入条目
+                            
+                        
+                        
+                break
+            except Exception as e:
+                print(e)
+                print('请重新输入:')
+                pass
+                break
             
             
             

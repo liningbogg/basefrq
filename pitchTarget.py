@@ -29,9 +29,8 @@ import wave
 #播放波形
 def playWave(data):
     p=pyaudio.PyAudio()
-    stream=p.open(format=pyaudio.paInt16, channels=1, rate=Fs, output=True)
-    data=data.astype(np.int16)
-    stream.write(data)
+    stream=p.open(format=pyaudio.paFloat32, channels=1, rate=Fs, output=True)
+    stream.write(data,num_frames=len(data))
     stream.stop_stream()
     #暂停
     stream.close()
@@ -141,9 +140,7 @@ for index in range(0,class1_listLen):
     referencePitchDeScan=[]
     referencePitchDeScanInput=[]
     referencePitchDeScanMedium=[]
-    
-    
-    stream=librosa.load(class1_path+class1_list[index],mono=False,sr=Fs)#以Fs重新采样
+    stream=librosa.load(class1_path+class1_list[index],mono=False,sr=None)#以Fs重新采样
     baseName=os.path.splitext(class1_list[index])[0]
     #标记记录文件名称
     logName=class1_path+baseName+'_%d'%Fs+'_%d'%nfft+'_log'+'.txt'
@@ -360,7 +357,7 @@ for index in range(0,class1_listLen):
                         start=int(item[1])
                         stop=int(item[2])
                         data=np.copy(x[0][start*nfft:stop*nfft])
-                        data=data*65536/2
+                        print(len(data))
                         playWave(data)
                     if cmdstr=="pt":
                         time=int(item[1])
@@ -369,16 +366,17 @@ for index in range(0,class1_listLen):
                             time=frame+1
                             print("time小于当前帧，自动移动一帧。")
                         for i in np.arange(frame,time):
+                            name=baseName
+                            init=frame*nfft
+                            lenClip=nfft
                             src=np.copy(speech_stft[i])
                             tar=item[2:]
                             tar=[float(p) for p in tar]
                             candidate=referencePitchDeScan[i]
                             tar=np.array(tar)
                             tar=np.where(tar<0.0,candidate,tar)#如果频率小于0则以候选频率替代
-                            targetItem=[src,tar]#待写入条目
-                            
-                        
-                        
+                            targetItem=[name,Fs,init,lenClip,src,tar]#待写入条目
+                            print(targetItem)
                 break
             except Exception as e:
                 print(e)

@@ -2,29 +2,20 @@
 音高人工标记
 '''
 from __future__ import print_function
-import os;
+import os
 import matplotlib.pyplot as plt
 import numpy as np
-from skimage import exposure
-import librosa
 import librosa.display
 import scipy
-from scipy.fftpack import fft,ifft
-import queue
 import math
-from scipy.optimize import leastsq
 from scipy import signal
-from findPeaks import findpeaks
+from findPeaks import findpeaks    
 from scipy.interpolate import interp1d
-import binascii
-from time import sleep
-from threading import Thread
-import time
 import baseFrqCombScan
-import baseFrqComb
 import pickle
 import pyaudio 
-import wave
+import sys
+import chin
 
 #播放波形
 def playWave(data):
@@ -32,9 +23,7 @@ def playWave(data):
     stream=p.open(format=pyaudio.paFloat32, channels=1, rate=Fs, output=True)
     stream.write(data,num_frames=len(data))
     stream.stop_stream()
-    #暂停
     stream.close()
-    #关闭
     p.terminate()
 
 #取得指定格式的dir列表
@@ -74,7 +63,6 @@ def addChche(pitch,inputV,mediumV,initPos,length,file):
         except EOFError:
             print('文件结束！')
             break
-   
 
 #删去缓存
 def deleteCache(pitch,inputV,mediumV,initPos,length):
@@ -127,7 +115,17 @@ def MaxMinNormalization(x,minv,maxv):
     Max=np.max(x)
     y = (x - Min) / (Max - Min+0.0000000001)*(maxv-minv)+minv;
     return y
-
+#filter by basefrq
+def filterByBasefrq(src,basefrq,width):
+    peaksPos=findpeaks(src, spacing=50, limit=max(src)*0.05)
+    peaks=src[peaksPos]#峰值大小
+    
+    tar=np.copy(src)
+    num=min(int(len(src)/basefrq),30)
+    for i in np.arange(num):
+        frq=i*basefrq
+        tar[frq-width:frq+width]=min(src[frq-width],src[frq+width])
+    return tar
 #目标标记程序流程
 thrarta=0.15
 thrartb=0.2
@@ -139,9 +137,11 @@ for index in range(0,class1_listLen):
     referencePitchMedium=[]
     referencePitchDeScan=[]
     referencePitchDeScanInput=[]
-    referencePitchDeScanMedium=[]
+    referencePitchDeScanMedium=[]    
     stream=librosa.load(class1_path+class1_list[index],mono=False,sr=None)#以Fs重新采样
     baseName=os.path.splitext(class1_list[index])[0]
+    #
+    sourceName=class1_path+baseName+'_%d'%Fs+'_%d'%nfft+'_src'+'.txt'
     #标记记录文件名称
     logName=class1_path+baseName+'_%d'%Fs+'_%d'%nfft+'_log'+'.txt'
     #标记文件名称
@@ -150,14 +150,15 @@ for index in range(0,class1_listLen):
     pitchPrepPathDeScan=class1_path+baseName+'_%d'%Fs+'_%d/'%nfft+'_%d'%Fs+'_%d'%nfft+'_descan_'
     pitchPrepPathComb=class1_path+baseName+'_%d'%Fs+'_%d/'%nfft+'_%d'%Fs+'_%d'%nfft+'_comb_'
     #读入标记记录文件
-    logFile=open(logName,'w+')
-    
-    
     x=stream[0]
     print('sampling rate:',stream[1])#采样率
     plt.plot(x[0]);plt.xlabel('sample'); plt.ylabel('amp');
     speech_stft,phase = librosa.magphase(librosa.stft(x[0], n_fft=nfft, hop_length=hopLength, window=scipy.signal.hamming))
     frameNum=len(speech_stft[0])
+    fileSrc=open(sourceName,'wb')
+    pickle.dump(x[0], fileSrc)            
+    fileSrc.flush()
+    fileSrc.close()
     for i in np.arange(frameNum):
         referencePitch.append([])
         referencePitchInput.append([])
@@ -165,14 +166,19 @@ for index in range(0,class1_listLen):
         referencePitchDeScan.append([])
         referencePitchDeScanInput.append([])
         referencePitchDeScanMedium.append([])
+    tarArray=np.ones((frameNum,5))
+    print(tarArray)
+    logFile=open(logName,'r+')   
     initFrame=logFile.readline()
     if len(initFrame)==0:
         initFrame=0
         logFile.write('0\n')
         logFile.flush()
-        
-    print(['初始位置:',initFrame])
-    
+    frame=int(initFrame)
+    print(['初始位置:',frame])
+    logFile.close()
+    logFile=open(logName,'a')
+
     plt.figure(figsize=(12, 4))
     fftForPitch=np.copy(speech_stft[0:np.int(nfft/Fs*4000)])#4000hz以下信号用于音高检测
     librosa.display.specshow(fftForPitch,sr=Fs,hop_length=nfft)
@@ -223,13 +229,14 @@ for index in range(0,class1_listLen):
     speech_stft_pitch=np.copy(speech_stft)#求音高用短时傅里叶频谱
     framePerFile=int(60*Fs/nfft)#1分钟每个文件
     cacheFile=[]
-    frame=0
     stopFile=math.ceil(len(speech_stft)*1.0/framePerFile)
     #target文件
     fileTarget=open(targetName,'ba')
     #pickle.dump(referencePitch, fileTarget)            
     #fileTarget.flush()
-    
+    isfilterBybasefrq=False
+    filterBasefrq=0
+    filterWidth=0
     while(frame<len(speech_stft)):
         print([frame*nfft/Fs,"%.2f"%(frame/len(speech_stft)*100.0)]) #当前时刻
         print(frame)  
@@ -309,11 +316,22 @@ for index in range(0,class1_listLen):
             plt.axvline((stopPos-1)*hopLength/Fs,color='r',ls="--")
         plt.plot(referenceTimes, referencePitchDeScan[max(0,frame-extendFrames):frame+extendFrames],label='pitchDeScan')
         plt.plot(referenceTimes, referencePitch[max(0,frame-extendFrames):frame+extendFrames],label='pitch')
+        plt.plot(referenceTimes, tarArray[max(0,frame-extendFrames):frame+extendFrames,0],label='tar0')
         plt.legend()
         plt.subplot(222)
         plt.plot(np.arange(len(referencePitchDeScanInput[frame])),referencePitchDeScanInput[frame])
         plt.subplot(224)
         plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame])
+        if isfilterBybasefrq==True:
+            referencePitchDeScanInputFilter=filterByBasefrq(referencePitchDeScanInput[frame],filterBasefrq,filterWidth)
+            plt.subplot(222)
+            plt.plot(np.arange(len(referencePitchDeScanInputFilter)),referencePitchDeScanInputFilter,label='filterd')
+            test=baseFrqCombScan.getPitchDeScan(referencePitchDeScanInputFilter,Fs,Fs*10,0)
+            print(test)
+            isfilterBybasefrq=False
+            filterBasefrq=0
+            filterWidth=0
+        #plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame])
         plt.show()
         
 
@@ -324,9 +342,13 @@ for index in range(0,class1_listLen):
         while True:
             try:
                 cmds=pitchinfo.split(';')
+                
+                logFile.write(pitchinfo)
+                logFile.write("\n")
                 for cmd in cmds:
                     item =cmd.split()#命令行及其参数
                     cmdstr=item[0]#命令字
+                    
                     if cmdstr=="dt":
                         time=int(item[1])
                         if(time<=frame):
@@ -357,7 +379,6 @@ for index in range(0,class1_listLen):
                         start=int(item[1])
                         stop=int(item[2])
                         data=np.copy(x[0][start*nfft:stop*nfft])
-                        print(len(data))
                         playWave(data)
                     if cmdstr=="pt":
                         time=int(item[1])
@@ -376,7 +397,25 @@ for index in range(0,class1_listLen):
                             tar=np.array(tar)
                             tar=np.where(tar<0.0,candidate,tar)#如果频率小于0则以候选频率替代
                             targetItem=[name,Fs,init,lenClip,src,tar]#待写入条目
-                            print(targetItem)
+                            #
+                            pickle.dump(targetItem, fileTarget)            
+                            fileTarget.flush()
+                            frame=frame+1
+                    if cmdstr=="flt":
+                        filterBasefrq=int(float(item[1])*10)
+                        filterWidth=int(float(item[2])*10)
+                        isfilterBybasefrq=True
+
+                    if cmdstr=="exit":
+                        logFile.close()
+                        with open(logName,"r",encoding="utf-8") as f:
+                            lines = f.readlines()
+                        lines[0]=str(frame)+"\n"
+                        with open(logName,"w",encoding="utf-8") as f_w:
+                            for line in lines:
+                                f_w.write(line)
+                        sys.exit(0)
+                        
                 break
             except Exception as e:
                 print(e)

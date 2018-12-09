@@ -1,5 +1,6 @@
 import numpy as np
 import librosa
+from string import digits
 
 class Chin:
 
@@ -10,6 +11,45 @@ class Chin:
     音分散音 按音 泛音分别标记为 S A F
     相对徽位位置用来标记按音着弦点和有效弦长，另外有效弦长也可用相对弦长标识，最大相对弦长为1
     """
+    noteslist = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
+    tonesList = [0,2,4,5,7,9,11]
+    huiList=[0, 1.0/8, 1.0/6, 1.0/5, 1.0/4, 1.0/3, 2.0/5, 0.5, 3.0/5, 2.0/3, 3.0/4, 4.0/5, 5.0/5, 7.0/8, 1]
+
+    @staticmethod
+    def pos2hui(pos):
+        count=0
+        for hui in Chin.huiList:
+            if pos>hui:
+                count=count+1
+                continue
+            else:
+                break
+        start = Chin.huiList[count-1]
+        end = Chin.huiList[count]
+        return count-1+(pos-start)/(end-start)
+
+    def note2tone(self, note):
+        remove_digits = str.maketrans('', '', digits)
+        reDo = note.translate(remove_digits)
+        return self.tones.index(reDo)+1
+
+    def cal_tones(self):
+        """
+        确定唱名对应的音阶
+        :return:
+        """
+        self.tones=[]
+        remove_digits = str.maketrans('', '', digits)
+        reDo = self.do.translate(remove_digits)
+        initpos=Chin.noteslist.index(reDo)
+        count=0
+        for item in Chin.tonesList:
+            item=item+initpos
+            pos=item%12
+            self.tones.append(Chin.noteslist[pos])
+            count=count+1
+        print(self.tones)
+
     @staticmethod
     def cal_position(basefrq, frq):
         """
@@ -38,6 +78,84 @@ class Chin:
 
         return pos
 
+    def cal_sanyinpred(self, pitch, thr):
+        """
+        匹配散音
+        :param pitch: 待匹配音高
+        :param thr: 匹配阈值
+        :return:匹配结果
+        """
+        string = ""
+        dist = abs(self.hzes - pitch)  # 音高距离
+        candidate = np.argmin(dist)  # 候选散音
+        relative = pitch / self.hzes[candidate]
+        score = (relative - 1) / (2 ** (1.0 / 12) - 1)
+        if abs(score) < thr:
+            string="s%d %+.2f"%((candidate+1),score)
+        return string
+
+    def cal_anyinstring(self, stringPitch, pitch, thr, spaceThr):
+        """
+        单一弦按音推测
+        :param stringPitch 散音音高
+        :param pitch:音高
+        :param thr: 音准阈值
+        :param spaceThr 绝对距离阈值
+        :return:
+        """
+        positionR = self.cal_position(stringPitch, pitch) # 相对位置
+        if positionR>0.96:
+            return 0
+        note = librosa.hz_to_note(pitch*self.scaling,cents=True)
+        candidate_note = note[:2]
+        candidatePos=self.cal_position(stringPitch, librosa.note_to_hz(candidate_note)) # 候选相对位置
+        errCents = float(note[2:])/100
+        # 如果note误差小于20%或者绝对位置误差小于2cm， 返回徽位
+        if errCents<thr and abs(positionR-candidatePos)<spaceThr and Chin.pos2hui(positionR)>1.5:
+            return Chin.pos2hui(positionR)
+        else:
+            return 0
+
+    def cal_anyinpred(self, pitch, thr, spaceThr):
+        """
+        七弦按音推测
+        :param pitch:音高
+        :param thr:音位阈值
+        :spaceThr：音位绝对位置阈值，反映手指精度
+        :return:
+        """
+        rs=[]
+        for i in np.arange(7):
+            anyin=self.cal_anyinstring(self.hzes[i], pitch, thr, spaceThr)
+            if anyin != 0:
+                rs.append([i+1 , anyin])
+        return rs
+
+    def cal_possiblepos(self, pitches):
+        """
+        计算可能的音类及音位
+        :param pitches:待解析的音高集合
+        :return: 特定音高对应的可能的音位集合
+        """
+        number=len(pitches)
+        possiblepos=[]
+        for i in range(number):
+            possiblepos.append([])
+        thrsanyin=0.2
+        thranyin=0.2
+        thranyinspace=0.02/1.2
+        for i in np.arange(number):
+            pitch=pitches[i]
+            # 散音检测
+            strid = self.cal_sanyinpred(pitch, thrsanyin)
+            if strid != "":
+                possiblepos[i].append(strid)
+            # 按音检测
+            anyinPrep=self.cal_anyinpred(pitch, thranyin, thranyinspace)
+            if anyinPrep != []:
+                possiblepos[i].append(anyinPrep)
+        return possiblepos
+        
     def __init__(self, **kw):
         """
         :param notes:
@@ -51,8 +169,9 @@ class Chin:
         self.do = None
         self.a4_hz = None
         self.hzes = None
+        self.tones = None
         self.scaling = 1
-        self.cal_notesposition(0.125)
+        self.pos = self.cal_notesposition(0.125)
         for key in kw:
             try:
                 if key == "notes":
@@ -117,6 +236,7 @@ class Chin:
         return self.do
 
     def set_do(self, do):
-        self.do=do
+        self.do = do
+        self.cal_tones()
 
 

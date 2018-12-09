@@ -1,6 +1,7 @@
 '''
 音高人工标记
 '''
+
 from __future__ import print_function
 import os
 import matplotlib.pyplot as plt
@@ -11,11 +12,20 @@ import math
 from scipy import signal
 from findPeaks import findpeaks    
 from scipy.interpolate import interp1d
+import sys
 import baseFrqCombScan
 import pickle
-import pyaudio 
-import sys
+import pyaudio
 import chin
+from datetime import datetime
+import django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "pitch.settings")# project_name 项目名称django.setup()
+django.setup()
+from target.models import Clip
+from target.models import Wave
+from django.db.models import Max
+import zlib
+
 
 #播放波形
 def playWave(data):
@@ -130,6 +140,7 @@ def filterByBasefrq(src,basefrq,width):
 thrarta=0.15
 thrartb=0.2
 throp=0.15
+lastestPos=[]
 for index in range(0,class1_listLen):
     print(class1_list[index])
     referencePitch=[]
@@ -152,13 +163,29 @@ for index in range(0,class1_listLen):
     #读入标记记录文件
     x=stream[0]
     print('sampling rate:',stream[1])#采样率
-    plt.plot(x[0]);plt.xlabel('sample'); plt.ylabel('amp');
+    plt.plot(x[0])
+    plt.xlabel('sample')
+    plt.ylabel('amp')
     speech_stft,phase = librosa.magphase(librosa.stft(x[0], n_fft=nfft, hop_length=hopLength, window=scipy.signal.hamming))
     frameNum=len(speech_stft[0])
-    fileSrc=open(sourceName,'wb')
+    fileSrc=open(sourceName, 'wb')
     pickle.dump(x[0], fileSrc)            
     fileSrc.flush()
     fileSrc.close()
+    if len(Clip.objects.all()) == 0:
+        frame = 0
+    else:
+        print(Clip.objects.all().aggregate(Max('startingPos')))
+        # 更新pos
+        frame = Clip.objects.all().aggregate(Max('startingPos'))['startingPos__max'] + 1
+
+    wavenum = Wave.objects.all().count()
+    if wavenum == 0:
+        wavestr = pickle.dumps(x[0])
+        cwavestr = zlib.compress(wavestr)
+        waveItem = Wave(title=baseName, wave=cwavestr)
+        waveItem.save()
+
     for i in np.arange(frameNum):
         referencePitch.append([])
         referencePitchInput.append([])
@@ -166,16 +193,15 @@ for index in range(0,class1_listLen):
         referencePitchDeScan.append([])
         referencePitchDeScanInput.append([])
         referencePitchDeScanMedium.append([])
-    tarArray=np.ones((frameNum,5))
-    print(tarArray)
-    logFile=open(logName,'r+')   
+    tarArray=np.ones((frameNum, 5))
+    logFile = open(logName, 'r+')
     initFrame=logFile.readline()
     if len(initFrame)==0:
         initFrame=0
         logFile.write('0\n')
         logFile.flush()
-    frame=int(initFrame)
-    print(['初始位置:',frame])
+    # frame=int(initFrame)
+    print(['初始位置:', frame])
     logFile.close()
     logFile=open(logName,'a')
 
@@ -237,7 +263,9 @@ for index in range(0,class1_listLen):
     isfilterBybasefrq=False
     filterBasefrq=0
     filterWidth=0
+    tmpShow=False
     while(frame<len(speech_stft)):
+        tmpShow=False
         print([frame*nfft/Fs,"%.2f"%(frame/len(speech_stft)*100.0)]) #当前时刻
         print(frame)  
         currentID=int(frame/framePerFile)
@@ -339,6 +367,7 @@ for index in range(0,class1_listLen):
         '''switch={
             "dt":lambda frame:int(time*Fs/fft)
         }'''
+
         while True:
             try:
                 cmds=pitchinfo.split(';')
@@ -348,7 +377,10 @@ for index in range(0,class1_listLen):
                 for cmd in cmds:
                     item =cmd.split()#命令行及其参数
                     cmdstr=item[0]#命令字
-                    
+                    if cmdstr=="mt":
+                        time = int(item[1])
+                        frame = time  # 调整当前帧位置
+                        tmpShow=True
                     if cmdstr=="dt":
                         time=int(item[1])
                         if(time<=frame):
@@ -359,15 +391,16 @@ for index in range(0,class1_listLen):
                                 print("放弃当前设置")
                         else:
                             frame=time#调整当前帧位置
+                        Clip.objects.filter(startingPos__gte=frame).delete()
                     if cmdstr=="thrart":
                         a=float(item[1])
                         b=float(item[2])
-                        if a>0:
-                            thrarta=a
-                        if b>0:
-                            thrartb=b
+                        if a > 0:
+                            thrarta = a
+                        if b > 0:
+                            thrartb = b
                         #重新计算起始位置
-                        clipStart=[i for i in mergeEEDINFO  if (i[2]<(-1*thrarta) and i[3]>thrartb)]
+                        clipStart = [i for i in mergeEEDINFO if (i[2]<(-1*thrarta) and i[3] > thrartb)]
                     if cmdstr=="throp":
                         thr=float(item[1])
                         if thr>0:
@@ -380,27 +413,48 @@ for index in range(0,class1_listLen):
                         stop=int(item[2])
                         data=np.copy(x[0][start*nfft:stop*nfft])
                         playWave(data)
+
                     if cmdstr=="pt":
                         time=int(item[1])
                         #如果time<0,认为自动移动一帧
+                        lastestPos=[]
                         if time<=frame:
                             time=frame+1
                             print("time小于当前帧，自动移动一帧。")
-                        for i in np.arange(frame,time):
+                        for i in np.arange(frame, time):
                             name=baseName
-                            init=frame*nfft
-                            lenClip=nfft
+                            init=frame
+                            lenClip = 1
                             src=np.copy(speech_stft[i])
                             tar=item[2:]
                             tar=[float(p) for p in tar]
                             candidate=referencePitchDeScan[i]
                             tar=np.array(tar)
                             tar=np.where(tar<0.0,candidate,tar)#如果频率小于0则以候选频率替代
-                            targetItem=[name,Fs,init,lenClip,src,tar]#待写入条目
+                            targetItem = [name, Fs, init, lenClip, src, tar]#待写入条目
                             #
                             pickle.dump(targetItem, fileTarget)            
                             fileTarget.flush()
+                            # 写入数据库
+                            srcstr=pickle.dumps(src)
+                            tarstr=pickle.dumps(tar)
+                            dbitem=Clip(title=name, startingPos=init, length=lenClip, src=srcstr, tar=tarstr,
+                                        timestamp=datetime.now())
+                            lastestPos.append(init)
+                            dbitem.save()
                             frame=frame+1
+                    if cmdstr == "anote":
+                        if lastestPos!=[]:
+                            for pos in lastestPos:
+                                lastItem = Clip.objects.get(startingPos=pos)
+                                if len(item)>1:
+                                    lastItem.anote = item[1]
+                                else:
+                                    lastItem.anote = ""
+                                lastItem.save()
+                        else:
+                            print("没有最新条目")
+
                     if cmdstr=="flt":
                         filterBasefrq=int(float(item[1])*10)
                         filterWidth=int(float(item[2])*10)
@@ -414,15 +468,21 @@ for index in range(0,class1_listLen):
                         with open(logName,"w",encoding="utf-8") as f_w:
                             for line in lines:
                                 f_w.write(line)
+
                         sys.exit(0)
-                        
+
                 break
             except Exception as e:
                 print(e)
                 print('请重新输入:')
                 pass
                 break
-            
+        # 更新pos
+        if tmpShow == False:
+            lastest = Clip.objects.all()
+            frame = lastest.aggregate(Max('startingPos'))['startingPos__max']+ 1
+            print(["test",frame])
+
             
             
             

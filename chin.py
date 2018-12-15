@@ -1,6 +1,7 @@
 import numpy as np
 import librosa
 from string import digits
+import math
 
 class Chin:
 
@@ -14,6 +15,7 @@ class Chin:
     noteslist = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
     tonesList = [0,2,4,5,7,9,11]
     huiList=[0, 1.0/8, 1.0/6, 1.0/5, 1.0/4, 1.0/3, 2.0/5, 0.5, 3.0/5, 2.0/3, 3.0/4, 4.0/5, 5.0/5, 7.0/8, 1]
+    fanyintimes = [8.0, 6.0, 5.0, 4.0, 3.0, 5.0, 2.0, 5.0, 3.0, 4.0, 5.0, 6.0, 8.0]
 
     @staticmethod
     def pos2hui(pos):
@@ -91,7 +93,7 @@ class Chin:
         relative = pitch / self.hzes[candidate]
         score = (relative - 1) / (2 ** (1.0 / 12) - 1)
         if abs(score) < thr:
-            string="s%d %+.2f"%((candidate+1),score)
+            string="s%d %+.2f"%((candidate+1), score)
         return string
 
     def cal_anyinstring(self, stringPitch, pitch, thr, spaceThr):
@@ -103,18 +105,22 @@ class Chin:
         :param spaceThr 绝对距离阈值
         :return:
         """
+
         positionR = self.cal_position(stringPitch, pitch) # 相对位置
         if positionR>0.96:
+           return 0
+        notesR=math.log(pitch/stringPitch, 2**(1/12)) # 相对散音音高
+        candidateNoteR=np.round(notesR)   # 候选相对散音音高
+        errR=notesR-candidateNoteR #相对散音音高误差
+        if abs(errR)>thr:
             return 0
-        note = librosa.hz_to_note(pitch*self.scaling,cents=True)
-        candidate_note = note[:2]
-        candidatePos=self.cal_position(stringPitch, librosa.note_to_hz(candidate_note)) # 候选相对位置
-        errCents = float(note[2:])/100
-        # 如果note误差小于20%或者绝对位置误差小于2cm， 返回徽位
-        if errCents<thr and abs(positionR-candidatePos)<spaceThr and Chin.pos2hui(positionR)>1.5:
-            return Chin.pos2hui(positionR)
         else:
-            return 0
+            candidate_positionR=1/((2**(1/12))**candidateNoteR)
+            if abs(positionR-candidate_positionR)<spaceThr and Chin.pos2hui(positionR)>1.5:
+                return Chin.pos2hui(positionR)
+            else:
+                return 0
+
 
     def cal_anyinpred(self, pitch, thr, spaceThr):
         """
@@ -124,12 +130,52 @@ class Chin:
         :spaceThr：音位绝对位置阈值，反映手指精度
         :return:
         """
-        rs=[]
+        rs = []
         for i in np.arange(7):
             anyin=self.cal_anyinstring(self.hzes[i], pitch, thr, spaceThr)
             if anyin != 0:
                 rs.append([i+1 , anyin])
         return rs
+
+    def cal_fanyinstring(self, stringpitch, pitch, thr):
+        """
+        获取指定弦泛音音位
+        :param stringpitch:  散音频率
+        :param pitch:  输入频率
+        :param thr:  匹配误差阈值
+        :param spacethr:  音位绝对距离误差阈值
+        :return: 可能的音位
+        """
+        # 泛音由于5倍泛音 7倍泛音的关系，不采用2**1/12做误差分析
+        times=pitch/stringpitch #频率比
+        if times<1.5:
+            return []
+        candidate_time=np.round(times) #候选倍数
+        err=times-np.round(times)
+        rs=[]
+        if abs(err)<thr:
+            for i in np.arange(13):
+                if Chin.fanyintimes[i]==candidate_time:
+                    rs.append(i+1)
+        return rs
+
+
+
+    def cal_fanyinpred(self, pitch, thr):
+        """
+        预测可能的泛音音位
+        :parweiam pitch:  音高
+        :param thr:  note百分比误差阈值
+        :param spacethr: 音位绝对距离阈值
+        :return:返回可能的泛音音位
+        """
+        rs = []
+        for i in np.arange(7):
+            fanyin = self.cal_fanyinstring(self.hzes[i], pitch, thr)
+            if fanyin !=  []:
+                rs.append([i+1, fanyin])
+        return rs
+
 
     def cal_possiblepos(self, pitches):
         """
@@ -144,6 +190,8 @@ class Chin:
         thrsanyin=0.2
         thranyin=0.2
         thranyinspace=0.02/1.2
+        thrfanyin=0.0875 #有待确定，确定这点比较难
+
         for i in np.arange(number):
             pitch=pitches[i]
             # 散音检测
@@ -154,6 +202,10 @@ class Chin:
             anyinPrep=self.cal_anyinpred(pitch, thranyin, thranyinspace)
             if anyinPrep != []:
                 possiblepos[i].append(anyinPrep)
+            # 泛音音位
+            fanyinpred = self.cal_fanyinpred(pitch, thrfanyin)
+            if fanyinpred != []:
+                possiblepos[i].append(fanyinpred)
         return possiblepos
         
     def __init__(self, **kw):
@@ -210,6 +262,9 @@ class Chin:
         :return: None
         """
         self.notes = np.where(notes == "H", self.notes, notes)
+        self.hzes = np.zeros(7)
+        for i in np.arange(7):
+            self.hzes[i] = librosa.note_to_hz(self.notes[i])*self.scaling
 
     def get_hzes(self):
         """

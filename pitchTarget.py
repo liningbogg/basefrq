@@ -25,6 +25,7 @@ from target.models import Clip
 from target.models import Wave
 from django.db.models import Max
 import zlib
+from chin import Chin
 
 
 #播放波形
@@ -45,8 +46,8 @@ def filterListDir(path,fmt):
         if(spilted[1]==fmt):
             filteredList.append(name)
     return filteredList
-class1_path="guqin6/"
-target_path="guqin10/"
+class1_path="../data/guqin6/"
+target_path="../data/guqin10/"
 class1_list=filterListDir(class1_path,'.flac')#暂时测试这一种格式
 class1_listLen=len(class1_list)
 class_db="./class1.txt"
@@ -141,6 +142,7 @@ thrarta=0.15
 thrartb=0.2
 throp=0.15
 lastestPos=[]
+chin = Chin(notes=['c2', 'd2', 'f2', 'g2', 'a2', 'c3', 'd3'], do='f2')
 for index in range(0,class1_listLen):
     print(class1_list[index])
     referencePitch=[]
@@ -261,8 +263,8 @@ for index in range(0,class1_listLen):
     #pickle.dump(referencePitch, fileTarget)            
     #fileTarget.flush()
     isfilterBybasefrq=False
-    filterBasefrq=0
-    filterWidth=0
+    filterBasefrq=[]
+    filterWidth=[]
     tmpShow=False
     while(frame<len(speech_stft)):
         tmpShow=False
@@ -344,6 +346,15 @@ for index in range(0,class1_listLen):
             plt.axvline((stopPos-1)*hopLength/Fs,color='r',ls="--")
         plt.plot(referenceTimes, referencePitchDeScan[max(0,frame-extendFrames):frame+extendFrames],label='pitchDeScan')
         plt.plot(referenceTimes, referencePitch[max(0,frame-extendFrames):frame+extendFrames],label='pitch')
+        #从数据库获取标记的主音高
+        candidate_clips = Clip.objects.filter(startingPos__range=(max(0,frame-extendFrames), frame+extendFrames)) #参考音高条目
+        for candidate_clip in candidate_clips:
+            candidate_tarstr = candidate_clip.tar #原始tar数据
+            candidate_tar = pickle.loads(candidate_tarstr)
+            candidate_pos = candidate_clip.startingPos
+
+            tarArray[candidate_pos] = candidate_tar[0] # 更新要显示的标记主音高
+
         plt.plot(referenceTimes, tarArray[max(0,frame-extendFrames):frame+extendFrames,0],label='tar0')
         plt.legend()
         plt.subplot(222)
@@ -351,17 +362,28 @@ for index in range(0,class1_listLen):
         plt.subplot(224)
         plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame])
         if isfilterBybasefrq==True:
-            referencePitchDeScanInputFilter=filterByBasefrq(referencePitchDeScanInput[frame],filterBasefrq,filterWidth)
-            plt.subplot(222)
-            plt.plot(np.arange(len(referencePitchDeScanInputFilter)),referencePitchDeScanInputFilter,label='filterd')
-            test=baseFrqCombScan.getPitchDeScan(referencePitchDeScanInputFilter,Fs,Fs*10,0)
-            print(test)
+
+            ori=np.copy(referencePitchDeScanInput[frame])
+            print(len(filterBasefrq))
+            for i in np.arange(len(filterBasefrq)):
+                referencePitchDeScanInputFilter=filterByBasefrq(ori,filterBasefrq[i],filterWidth[i])
+                plt.subplot(222)
+                plt.plot(np.arange(len(referencePitchDeScanInputFilter)),referencePitchDeScanInputFilter,label='filter')
+                test=baseFrqCombScan.getPitchDeScan(referencePitchDeScanInputFilter,Fs,Fs*10,0)
+                print(test)
+                ori=np.copy(referencePitchDeScanInputFilter)
             isfilterBybasefrq=False
-            filterBasefrq=0
-            filterWidth=0
+            filterBasefrq=[]
+            filterWidth=[]
+        else:
+            print("保留功能")
+
         #plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame])
+        print(referencePitchDeScan[frame])
+        print(chin.cal_possiblepos([referencePitchDeScan[frame]]))
         plt.show()
-        
+
+
 
         pitchinfo=input("cmd:")
         '''switch={
@@ -392,6 +414,7 @@ for index in range(0,class1_listLen):
                         else:
                             frame=time#调整当前帧位置
                         Clip.objects.filter(startingPos__gte=frame).delete()
+                        tmpShow=True
                     if cmdstr=="thrart":
                         a=float(item[1])
                         b=float(item[2])
@@ -442,7 +465,7 @@ for index in range(0,class1_listLen):
                                         timestamp=datetime.now())
                             lastestPos.append(init)
                             dbitem.save()
-                            frame=frame+1
+                            frame = frame+1
                     if cmdstr == "anote":
                         if lastestPos!=[]:
                             for pos in lastestPos:
@@ -456,8 +479,13 @@ for index in range(0,class1_listLen):
                             print("没有最新条目")
 
                     if cmdstr=="flt":
-                        filterBasefrq=int(float(item[1])*10)
-                        filterWidth=int(float(item[2])*10)
+                        filterBasefrq=[]
+                        filterWidth=[]
+                        for i in np.arange(1,len(item)):
+                            if i%2 == 1:
+                                filterBasefrq.append(int(float(item[i])*10))
+                            else:
+                                filterWidth.append(int(float(item[i])*10))
                         isfilterBybasefrq=True
 
                     if cmdstr=="exit":
@@ -480,8 +508,13 @@ for index in range(0,class1_listLen):
         # 更新pos
         if tmpShow == False:
             lastest = Clip.objects.all()
-            frame = lastest.aggregate(Max('startingPos'))['startingPos__max']+ 1
-            print(["test",frame])
+
+            frame = lastest.aggregate(Max('startingPos'))['startingPos__max']
+            if frame is not None:
+                frame = frame+1
+            else:
+                frame = 0
+            print(["test", frame])
 
             
             

@@ -35,6 +35,8 @@ def MaxMinNormalization(x,minv,maxv):
 #次峰限幅
 def subpeakAmpLimiting(dataClip,space,limit):
     peaks=findpeaks(dataClip, spacing=space, limit=max(dataClip)*limit)
+    if(len(peaks)==0):
+        return dataClip
     dots=np.copy(dataClip[peaks])
     dots[np.argmax(dots)]=0
     maxval=max(dots)
@@ -97,6 +99,9 @@ def getScanDot(deSamp,height):
 def getBaseLineFromScan(deSamp,num):
     minval=min(deSamp[20:-1])#最小值
     maxval=np.mean(deSamp[16:26])#最大值
+    print (minval,maxval)
+    if(maxval-minval)<2:
+        return np.zeros(num)
     intercept=(maxval-minval)/1000.0
     heights=np.arange(minval+intercept,maxval,intercept)
     x=[]
@@ -119,7 +124,7 @@ def getPitch(dataClip,Fs,nfft,showTestView):
     pitch=0
     dataClip[0:int(30*nfft/Fs)]=0
     dataClip=subpeakAmpLimiting(dataClip,int(30.0/Fs*nfft),0.1) #次峰限幅
-    if showTestView: 
+    if showTestView==1: 
         plt.subplot(221)
         plt.plot(np.arange(len(dataClip)), dataClip,label='amp-frq')
     lowCutoff=int(40*441000.0/Fs)#最低截止频率对应的坐标
@@ -155,10 +160,15 @@ def getPitch(dataClip,Fs,nfft,showTestView):
     if showTestView==1:
         plt.subplot(224)
         plt.plot(np.arange(len(trueTrans)), trueTrans,label='trueTrans')
+    if(sum(dataClip)<1):
+        return [0/10.0,resampY,trueTrans]
     pitch=max(trueTrans)/sum(dataClip)
+    plt.show()
     #频率采样变换后寻峰
     combTransPeaks=findpeaks(trueTrans, spacing=peakSearchPixes, limit=max(trueTrans)*peakSearchAmp)
     peaks=trueTrans[combTransPeaks]#峰值大小
+    if(len(peaks)==0):
+        return [0/10.0,resampY,trueTrans]
     maxindex=np.argmax(peaks)
     maxfrq=combTransPeaks[maxindex]#最高峰值位置
     #寻找1hz以内的最大的峰
@@ -175,4 +185,4 @@ def getPitch(dataClip,Fs,nfft,showTestView):
     if showTestView==1:
         plt.scatter(combTransPeaks, trueTrans[combTransPeaks], color='', marker='o', edgecolors='r', s=100)
         plt.show()     
-    return pitch/10.0
+    return [pitch/10.0,resampY,trueTrans]

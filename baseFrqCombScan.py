@@ -15,7 +15,7 @@ from findPeaks import findpeaks
 from scipy.interpolate import interp1d
 '''
 本文件的基频检测算法为传统的梳状算法；
-减去轨迹线
+减去轨迹线subpeakAmpLimiting
 用于对深度学习数据进行人工标注；
 不作为基频检测的最后结果
 对数据的人工标注为：输入 40000个数据 输出 最容易识别的最强基频 先暂时标注频率值 待找到合适编码机制在编码
@@ -35,6 +35,8 @@ def MaxMinNormalization(x,minv,maxv):
 #次峰限幅
 def subpeakAmpLimiting(dataClip,space,limit):
     peaks=findpeaks(dataClip, spacing=space, limit=max(dataClip)*limit)
+    if len(peaks)==0:
+        return dataClip
     dots=np.copy(dataClip[peaks])
     dots[np.argmax(dots)]=0
     maxval=max(dots)
@@ -86,7 +88,11 @@ def getScanDot(deSamp,height):
     b=biasShift[1:lenDesamp-1]
     c=a*b
     jiaodian=np.where(c<=0)
-    x1=jiaodian[0][0]
+    try:
+        x1=jiaodian[0][0]
+    except Exception as e:
+        print(e)
+        return []
     x2=x1+1
     y1=deSamp[x1]
     y2=deSamp[x2]
@@ -96,6 +102,8 @@ def getScanDot(deSamp,height):
 def getBaseLineFromScan(deSamp,num):
     minval=min(deSamp[20:-1])#最小值
     maxval=np.mean(deSamp[16:26])#最大值
+    if (maxval-minval)<1:
+        return np.zeros(num)
     intercept=(maxval-minval)/1000.0
     heights=np.arange(minval+intercept,maxval,intercept)
     x=[]
@@ -103,6 +111,8 @@ def getBaseLineFromScan(deSamp,num):
     pos=-1
     for i in heights:
         dot=getScanDot(deSamp[0:pos],i)
+        if dot==[]:
+            return np.zeros(num)
         x.append(dot[0]*10.0)
         y.append(dot[1])
         pos=int(dot[0])+20
@@ -126,7 +136,7 @@ def getPitchDeScan(dataClip,Fs,nfft,showTestView):
     peakSearchPixes=int(3*441000/Fs)#寻峰间距
     peakSearchAmp=0.1#寻峰高度
     #线性内插重新采样
-    processingX=np.arange(0,int(nfft/Fs*4000))#最大采集到4000Hz,不包括最大值，此处为尚未重采样的原始频谱
+    processingX=np.arange(0,min(int(nfft/Fs*4000),len(dataClip)))#最大采集到4000Hz,不包括最大值，此处为尚未重采样的原始频谱
     processingY=dataClip[processingX]#重采样的fft
     lenProcessingX=len(processingX)#待处理频谱长度
     finterp=interp1d(processingX,processingY,kind='linear')#线性内插配置
@@ -163,10 +173,15 @@ def getPitchDeScan(dataClip,Fs,nfft,showTestView):
     if showTestView==1:
         plt.subplot(236)
         plt.plot(np.arange(len(trueTrans)), trueTrans,label='trueTrans')
+    if(sum(dataClip)<1):
+        return [0/10.0,resampY,trueTrans]
     pitch=max(trueTrans)/sum(dataClip)
+    
     #频率采样变换后寻峰
     combTransPeaks=findpeaks(trueTrans, spacing=peakSearchPixes, limit=max(trueTrans)*peakSearchAmp)
     peaks=trueTrans[combTransPeaks]#峰值大小
+    if(len(peaks)==0):
+        return [0/10.0,resampY,trueTrans]
     maxindex=np.argmax(peaks)
     maxfrq=combTransPeaks[maxindex]#最高峰值位置
 

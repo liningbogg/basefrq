@@ -1,6 +1,8 @@
-'''
+"""
 音高人工标记
-'''
+输入：fft数据，原始未有差值的傅里叶频谱
+标签:不定数目音高，倍频 高音优先，其他的强信号优先
+"""
 
 from __future__ import print_function
 import os
@@ -17,7 +19,6 @@ import baseFrqCombScan
 import pickle
 import pyaudio
 from datetime import datetime
-import zlib
 from chin import Chin
 import django
 from django.db.models import Max
@@ -28,73 +29,110 @@ from target.models import Wave
 from target.models import Tone
 from target.models import Log
 from target.models import MarkedPhrase
+from scipy.fftpack import fft,ifft
 
 
-#播放波形
-def playWave(data):
-    p=pyaudio.PyAudio()
-    stream=p.open(format=pyaudio.paFloat32, channels=1, rate=Fs, output=True)
-    stream.write(data,num_frames=len(data))
-    stream.stop_stream()
-    stream.close()
+# 播放波形
+def playwave(dataplay):
+    p = pyaudio.PyAudio()
+    streamplay = p.open(format=pyaudio.paFloat32, channels=1, rate=Fs, output=True)  # 播放采用单声道
+    streamplay.write(dataplay, num_frames=len(dataplay))  # 此处不是帧数的意思
+    streamplay.stop_stream()
+    streamplay.close()
     p.terminate()
 
-#取得指定格式的dir列表
-def filterListDir(path,fmt):
-    dirList=os.listdir(path)
-    filteredList=[]
-    for name in dirList:
-        spilted=os.path.splitext(name)
-        if(spilted[1]==fmt):
-            filteredList.append(name)
-    return filteredList
-class1_path="../data/guqin6/"
-target_path="../data/guqin10/"
-class1_list=filterListDir(class1_path,'.flac')#暂时测试这一种格式
-class1_listLen=len(class1_list)
-class_db="./class1.txt"
-Fs=44100
-nfft=int(4410)#窗口尺寸
-hopLength=int(nfft)#步长
 
-rmseS=1#是否显示瞬时能量
-rmseDS=0#瞬时能量diff 
-EES=1#是否显示谱熵
-EEDS=1
-MergeEEDS=1#融合区域后的EEDS
-showTestView=0#是否逐帧显示fft过程,需要把所有弹出窗口均关闭，然后关闭一个fft窗口 就会弹出下一个（只会这么整了）
-pitchExtend=4#为了标注音高延申的数据长度，单位秒
+# 取得指定后缀名的dir列表
+def filterListDir(path, fmt):
+    dirList = os.listdir(path)
+    filteredList = []
+    for namefile in dirList:
+        spilted = os.path.splitext(namefile)
+        if spilted[1] == fmt:
+            filteredList.append(namefile)
+    return filteredList
+
+
+class1_path="../dataFiltered/guqin9/"  # target路径
+class1_list=filterListDir(class1_path, '.flac')  # 暂时测试这一种格式,后期有待修改
+class1_listLen = len(class1_list)  # 文件列表长度
+Fs=44100  # 采样率
+nfft = int(4410)  # 窗口尺寸
+hopLength = int(nfft)  # 步长，目前暂时设置的跟nfft一样
+rmseS = 1  # 是否显示瞬时能量
+rmseDS = 0  # 是否显示瞬时能量diff
+EES = 1  # 是否显示谱熵
+EEDS = 1  # 是否显示谱熵梯度
+MergeEEDS = 1  # 融合区域后的EEDS
+showTestView = 0  # 是否逐帧显示fft过程,需要把所有弹出窗口均关闭，然后关闭一个fft窗口 就会弹出下一个（只会这么整了）
+pitchExtend = 4  # 为了标注音高延申的数据长度，单位秒
 toneShowWidth = 5  # 音高标记显示宽度
-#依据文件添加缓存数据
-def addChche(pitch,inputV,mediumV,initPos,length,file):
-    for i in np.arange(initPos,initPos+length):
+
+
+def addChche(pitch, pitchFilter, inputV, mediumV, initPos, length, file):
+    """
+    添加缓存
+    :param pitch:候选音高数列
+    :param inputV:原始输入数列
+    :param mediumV:中间结果序列
+    :param initPos:起始位置
+    :param length:帧数
+    :param file:输入文件
+    :return:无返回
+    """
+    for indexcache in np.arange(initPos, initPos+length):
         try:
-            listV=pickle.load(file)
-            pitch[i]=listV[0]
-            inputV[i]=listV[1]
-            mediumV[i]=listV[2]
-            
-        except EOFError as e:
-            print('文件结束！%d' %i)
+            if pitchFilter is None:
+                listV = pickle.load(file)  # 解码序列
+                pitch[indexcache] = listV[0]
+                inputV[indexcache] = listV[1]
+                mediumV[indexcache] = listV[2]
+            else:
+                listV = pickle.load(file)  # 解码序列
+                oriData = listV[0]
+                filteredData = listV[1]
+                pitch[indexcache] = oriData[0]
+                inputV[indexcache] = oriData[1]
+                mediumV[indexcache] = oriData[2]
+                pitchFilter[indexcache] = filteredData
+        except EOFError:
+            print('文件结束！%d' % indexcache)
             break
 
-#删去缓存
-def deleteCache(pitch,inputV,mediumV,initPos,length):
-    for i in np.arange(initPos,initPos+length):
-        pitch[i]=[]
-        inputV[i]=[]
-        mediumV[i]=[]
-#用于积分的累积求和
-def merge(src,rmse):
-    x=np.copy(src)
-    length=len(x)
-    currentSum=0
-    currentInit=0
-    maxRmse=0
-    maxEEPos=0
+
+def deleteCache(pitch, pitchFiltered, inputV, mediumV, initPos, length):
+    """
+    卸载缓存
+    :param pitch:待清理的音高数列
+    :param inputV:待清理的输入数列
+    :param mediumV:待清理的中间数列
+    :param initPos:待清理的初始位置
+    :param length:待清理数列的长度
+    :return:
+    """
+    for delcache in np.arange(initPos, initPos+length):
+        pitch[delcache] = []
+        inputV[delcache] = []
+        mediumV[delcache] = []
+        if pitchFiltered is not None:
+            pitchFiltered[delcache] = []
+
+def merge(src, rmse):
+    """
+    #用于积分的累积求和
+    :param src:eedf
+    :param rmse:辅助判断端点
+    :return:
+    """
+    x = np.copy(src)
+    length = len(x)  # eedf数组长度
+    currentSum = 0
+    currentInit = 0
+    maxRmse = 0
+    maxEEPos = 0
     info=[]
     for i in np.arange(length):
-        if (currentSum*x[i])<0:
+        if (currentSum*x[i]) < 0:
             try:
                 #当前区域结束,设置区域值
                 maxRmse=max(rmse[currentInit:i])
@@ -112,8 +150,8 @@ def merge(src,rmse):
     try:
         maxRmse=max(rmse[currentInit:i])
     except Exception:
-        maxRmse =0
-    info.append([currentInit,len(src),currentSum,maxRmse,maxEEPos])
+        maxRmse = 0
+    info.append([currentInit, len(src), currentSum, maxRmse, maxEEPos])
     return [x,info]    
 
          
@@ -121,13 +159,30 @@ def merge(src,rmse):
 def func(p,x):
     return p*x
 def error(p,x,y):
-    return (func(p,x)-y)*(func(p,x)-y) 
+    return (func(p,x)-y)*(func(p,x)-y)
 
+
+def pitchCorrection(pitch, can, thrCent):
+    """
+    频率（泛频）矫正
+    :param pitch: 输入
+    :param candidate: 参考
+    :return:输出音高4
+    """
+    candidate=can
+    times = np.round(max(pitch, candidate)/min(pitch, candidate))  # 频率倍数
+    if pitch<candidate:
+        times = 1.0/times
+    candidate = times*candidate
+    if abs(math.log((pitch/candidate), 2.0**(1.0/12))) < thrCent:
+        return candidate
+    else:
+        return pitch
 #归一化函数
 def MaxMinNormalization(x,minv,maxv):
     Min=np.min(x)
     Max=np.max(x)
-    y = (x - Min) / (Max - Min+0.0000000001)*(maxv-minv)+minv;
+    y = (x - Min) / (Max - Min+0.0000000001)*(maxv-minv)+minv
     return y
 #filter by basefrq
 def filterByBasefrq(src, basefrq, width):
@@ -146,9 +201,8 @@ throp=0.15
 # 默认基频过滤参数
 defaultFltWidth = int(300)  # 默认频率过滤宽度 30hz
 thrResPow = 0.2  # 过滤残余能量阈值 50%
-
+isFilterShow = True  #是否显示过滤后的基频
 lastestPos=[]
-chin = Chin()  # notes=['c2', 'd2', 'f2', 'g2', 'a2', 'c3', 'd3']
 index = 0
 while True:
     # 选择曲目
@@ -177,6 +231,7 @@ while True:
     referencePitchDeScan=[]
     referencePitchDeScanInput=[]
     referencePitchDeScanMedium=[]
+    referencePitchDeScanFilter=[]
     songName = class1_path + class1_list[index]
     stream = librosa.load(songName, mono=False, sr=None)#以Fs重新采样
     baseName = os.path.splitext(class1_list[index])[0]
@@ -187,6 +242,7 @@ while True:
     #读入标记记录文件
     x=stream[0]
     print('sampling rate:',stream[1])#采样率
+    plt.figure(figsize=(12, 8))
     plt.plot(x[0])
     plt.xlabel('sample')
     plt.ylabel('amp')
@@ -206,50 +262,46 @@ while True:
         waveItem = Wave(title=baseName, waveFile=os.path.abspath(songName), frameNum=frameNum, fs=Fs)
         waveItem.save()
     wave = Wave.objects.get(title=baseName)
-    if wave.notes != "":
-        print(wave.notes)
-        notesstr = input("是否保留notes，是则y，否则直接键入notes：")
-        if notesstr!="y":
-            wave.notes=notesstr
-            wave.save()
+    if wave.chin is None:
+        chin = Chin()
     else:
-        notesstr=input("键入notes：")
-        wave.notes = notesstr
-        wave.save(update_fields=["notes"])
+        chin = pickle.loads(wave.chin)
+    print(chin.get_notes())
+    notesstr = input("是否保留notes，是则y，否则直接键入notes：")
+    if notesstr != "y":
+        notes = [n for n in notesstr.split()]
+        chin.set_notes(notes)
+    print("hzes", chin.get_hzes())
+    print("a4hz", chin.get_ahz())
+    print("do:", chin.get_do())
+    print('scaling:',chin.get_scaling())
+    dostr = input("是否保留do，是则y，否则直接键入do：")
+    if dostr != "y":
+        do = dostr
+        chin.set_do(do)
 
-    if wave.do != "":
-        print(wave.do)
-        dostr = input("是否保留do，是则y，否则直接键入do：")
-        if dostr!="y":
-            wave.do=dostr
-            wave.save()
-    else:
-        dostr=input("键入do：")
-        wave.do = dostr
-        wave.save(update_fields=["do"])
-
-    notesList = wave.notes. split(" ")
-    chin.set_notes(notes=notesList)  # 设置notes
-    chin.set_do(wave.do)  # 设置曲调
+    wave.chin=pickle.dumps(chin)
+    wave.save(update_fields=["chin"])
 
     for i in np.arange(frameNum):
         referencePitch.append([])
         referencePitchInput.append([])
         referencePitchMedium.append([])
-        referencePitchDeScan.append([])
-        referencePitchDeScanInput.append([])
-        referencePitchDeScanMedium.append([])
+        referencePitchDeScan.append([])  # de scan 结果
+        referencePitchDeScanInput.append([])  # src输入
+        referencePitchDeScanMedium.append([])  # 中间结果
+        referencePitchDeScanFilter.append([])  # 过滤后频率
     tarArray=np.ones((frameNum, 5))
 
     print(['初始位置:', frame])
 
-    plt.figure(figsize=(12, 4))
+    plt.figure(figsize=(12, 8))
     fftForPitch=np.copy(speech_stft[0:np.int(nfft/Fs*4000)])#4000hz以下信号用于音高检测
     librosa.display.specshow(fftForPitch,sr=Fs,hop_length=nfft)
     rmse = librosa.feature.rmse(y=x[0],S=None,frame_length=nfft, hop_length=hopLength, center=True, pad_mode='reflect')[0]
     times = librosa.frames_to_time(np.arange(len(rmse)),sr=Fs,hop_length=hopLength,n_fft=nfft)
     rmse=MaxMinNormalization((rmse),0,1)
-    plt.figure(figsize=(12, 4))
+    plt.figure(figsize=(12, 8))
     if rmseS==1:
         plt.plot(times, rmse,label='rmse_hop')
     #求功率熵
@@ -289,7 +341,7 @@ while True:
     pre=0
     pitchs=[]
     extendFrames=int(pitchExtend*Fs/nfft)#向前扩展的帧数
-    plt.figure()
+
     speech_stft_pitch=np.copy(speech_stft)#求音高用短时傅里叶频谱
     framePerFile=int(60*Fs/nfft)#1分钟每个文件
     cacheFile=[]
@@ -300,6 +352,7 @@ while True:
     filterWidth=[]
     tmpShow=False
     while(frame<len(speech_stft)):
+        plt.figure(figsize=[12, 8])
         tmpShow=False
         print("时刻:%.2f 进度:%.2f" % (frame*nfft/Fs, frame/len(speech_stft)*100.0))  # 当前时刻
         currentID=int(frame/framePerFile)
@@ -314,20 +367,21 @@ while True:
                 initPos=i*framePerFile
                 length=framePerFile
                 file=open(pitchPrepPathComb+'%02d'%i+'.txt','rb')
-                addChche(referencePitch,referencePitchInput,referencePitchMedium,initPos,length,file)#通过文件增加缓存并做校验
+                addChche(referencePitch,None,referencePitchInput,referencePitchMedium,initPos,length,file)#通过文件增加缓存并做校验
                 file.close()
                 file =open(pitchPrepPathDeScan+'%02d'%i+'.txt','rb')
-                addChche(referencePitchDeScan,referencePitchDeScanInput,referencePitchDeScanMedium,initPos,length,file)#通过文件增加缓存并做校验
+                addChche(referencePitchDeScan, referencePitchDeScanFilter, referencePitchDeScanInput, \
+                         referencePitchDeScanMedium, initPos, length, file)#通过文件增加缓存并做校验
                 file.close()
         deleteSet=[i for i in cacheFile if i not in newSet]#应该删去的缓存
         
         if deleteSet!=[]:
             #删除缓存
             for i in deleteSet:
-                initPos=i*framePerFile
+                initPos = i*framePerFile
                 length=framePerFile
-                deleteCache(referencePitch,referencePitchInput,referencePitchMedium,initPos,length)#删除缓存
-                deleteCache(referencePitchDeScan,referencePitchDeScanInput,referencePitchDeScanMedium,initPos,length)#删除缓存
+                deleteCache(referencePitch, None, referencePitchInput,referencePitchMedium,initPos,length)#删除缓存
+                deleteCache(referencePitchDeScan, referencePitchDeScanFilter,referencePitchDeScanInput, referencePitchDeScanMedium,initPos,length)#删除缓存
         cacheFile= newSet
         dataClip=np.copy(speech_stft[frame])
         dataClip[0:int(30*nfft/Fs)]=0#清零30hz以下信号
@@ -343,14 +397,14 @@ while True:
         lenResampY=len(resampY)
         #显示局部输入数据，便于人工标记
         #初步设置显示2s以内的数据
-        extendClips=np.arange(max(0,frame-extendFrames),frame+extendFrames)#延长的帧ID
+        extendClips = np.arange(max(0, frame-extendFrames), min(frame+extendFrames, len(rmse)))#延长的帧ID
         
         referenceRmse=np.copy(rmse[extendClips])
         referenceEE=np.copy(EE[extendClips])
         referenceMEED=np.copy(mergeEED[extendClips])
         referenceMEED=np.insert(referenceMEED,0,0,None)
         referenceTimes=librosa.frames_to_time(extendClips,sr=Fs,hop_length=hopLength,n_fft=nfft)-0.05
-        plt.close()
+        # plt.close()
         plt.subplot(221)
         plt.plot(referenceTimes, referenceRmse,label='rmse')
         plt.plot(referenceTimes, referenceEE,label='EE')
@@ -377,21 +431,24 @@ while True:
         for stopPos in currentClipStop:
             plt.axvline((stopPos-1)*hopLength/Fs,color='r',ls="--")
         plt.plot(referenceTimes, referencePitchDeScan[max(0,frame-extendFrames):frame+extendFrames],label='pitchDeScan')
+        if isFilterShow:
+            plt.plot(referenceTimes, referencePitchDeScanFilter[max(0, frame - extendFrames):frame + extendFrames],
+                     label='pitchDSFilter', ls="--")
         plt.plot(referenceTimes, referencePitch[max(0,frame-extendFrames):frame+extendFrames],label='pitch')
         #从数据库获取标记的主音高
-        candidate_clips = Clip.objects.filter(startingPos__range=(max(0,frame-extendFrames), frame+extendFrames)) #参考音高条目
+        candidate_clips = Clip.objects.filter(title=baseName, startingPos__range=(max(0,frame-extendFrames), frame+extendFrames)) #参考音高条目
         for candidate_clip in candidate_clips:
             candidate_tarstr = candidate_clip.tar #原始tar数据
             candidate_tar = pickle.loads(candidate_tarstr)
             candidate_pos = candidate_clip.startingPos
             tarArray[candidate_pos] = candidate_tar[0] # 更新要显示的标记主音
-
-        plt.plot(referenceTimes, tarArray[max(0,frame-extendFrames):frame+extendFrames,0],label='tar0')
         plt.legend()
+        plt.plot(referenceTimes, tarArray[max(0,frame-extendFrames):frame+extendFrames,0],label='tar0')
+
         plt.subplot(222)
-        plt.plot(np.arange(len(referencePitchDeScanInput[frame])),referencePitchDeScanInput[frame])
+        plt.plot(np.arange(len(referencePitchDeScanInput[frame])),referencePitchDeScanInput[frame], label='ori')
         plt.subplot(224)
-        plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame])
+        plt.plot(np.arange(len(referencePitchDeScanMedium[frame])),referencePitchDeScanMedium[frame], label='medium')
         resPitch = []  # 残余基频
         if isfilterBybasefrq==True:
             # 待过滤数据
@@ -429,7 +486,7 @@ while True:
                 if (pre-resCent)<thrResPow:
                     break
                 print("残余基频%d：%.2f notes:%s  残余:%.2f"\
-                      % (index, test[0], librosa.hz_to_note(test[0]*chin.scaling, cents=True), resCent))
+                      % (index, test[0], librosa.hz_to_note(test[0]*chin.get_scaling(), cents=True), resCent))
                 fltPitch = test[0]  # 更新过滤基音
                 if resCent>thrResPow:
                     resPitch.append(fltPitch)
@@ -438,15 +495,15 @@ while True:
         if isfilterBybasefrq==True:
             for pitchFlt in filterBasefrq:
                 pitchFlt = pitchFlt/10.0
-                print("默认基频 :%.2f notes:%s" % (pitchFlt, librosa.hz_to_note(pitchFlt * chin.scaling, cents=True)))
+                print("默认基频 :%.2f notes:%s" % (pitchFlt, librosa.hz_to_note(pitchFlt * chin.get_scaling(), cents=True)))
                 print(chin.cal_possiblepos([pitchFlt])[1])
                 isfilterBybasefrq = False
                 filterBasefrq = []
                 filterWidth = []
         else:
             if referencePitchDeScan[frame] > 40:
-                print("默认基频 :%.2f notes:%s"\
-                    % (referencePitchDeScan[frame],librosa.hz_to_note(referencePitchDeScan[frame]*chin.scaling, cents=True)))
+                print("\033[0;32;0m 默认基频 : %.2f \033[0m notes:%s"\
+                    % (referencePitchDeScan[frame],librosa.hz_to_note(referencePitchDeScan[frame]*chin.get_scaling(), cents=True)))
                 print(chin.cal_possiblepos([referencePitchDeScan[frame]])[1])
 
         if resPitch != []:
@@ -463,10 +520,10 @@ while True:
         print(showstr)
         plt.legend()
         plt.show()
-
-        pitchinfo = input("cmd:")
-        Log(title=baseName, content=pitchinfo, timestamp=datetime.now()).save()
-        while True:
+        cycFlag = True
+        while cycFlag:
+            pitchinfo = input("cmd:")
+            Log(title=baseName, content=pitchinfo, timestamp=datetime.now()).save()
             try:
                 cmds=pitchinfo.split(';')
 
@@ -475,8 +532,12 @@ while True:
                     cmdstr=item[0]#命令字
                     if cmdstr=="mt":
                         time = int(item[1])
+                        if time >= frameNum:
+                            print("跳转位置超过帧数目,重新输入")
+                            break
                         frame = time  # 调整当前帧位置
                         tmpShow=True
+                        cycFlag=False
                     if cmdstr=="dt":
                         time=int(item[1])
                         if(time<=frame):
@@ -489,6 +550,7 @@ while True:
                             frame=time#调整当前帧位置
                         Clip.objects.filter(startingPos__gte=frame).delete()
                         tmpShow = True
+                        cycFlag = False
                     if cmdstr == "thrart":
                         a=float(item[1])
                         b=float(item[2])
@@ -498,11 +560,13 @@ while True:
                             thrartb = b
                         #重新计算起始位置
                         clipStart = [i for i in mergeEEDINFO if (i[2]<(-1*thrarta) and i[3] > thrartb)]
+
                     if cmdstr=="throp":
                         thr=float(item[1])
                         if thr>0:
-                            throp=thr
+                            throp = thr
                         clipStop=[i for i in mergeEEDINFO  if (i[2]>throp ) ]
+
                     if cmdstr=="ef":
                         extendFrames=int(item[1])
                     if cmdstr=="tw":  # tone width
@@ -511,7 +575,7 @@ while True:
                         start=int(item[1])
                         stop=int(item[2])
                         data=np.copy(x[0][start*nfft:stop*nfft])
-                        playWave(data)
+                        playwave(data)
                     if cmdstr == "mark":
                         start = int(item[1])
                         stop = int(item[2])
@@ -536,7 +600,14 @@ while True:
                             tar = [float(p) for p in tar]
                             candidate = referencePitchDeScan[i]
                             tar = np.array(tar)
-                            tar = np.where(tar < 0.0, candidate, tar)#如果频率小于0则以候选频率替代
+                            # 如果频率小于0则以候选频率替代, 如果是候选频的倍数则替换为候选频的整数倍， 暂定阈值15音分
+                            # tar = np.where(tar < 0.0, candidate*abs(tar), pitchCorrection(tar, candidate, 0.15))
+                            for p in np.arange(len(tar)):
+                                if tar[p]<0.0:
+                                    tar[p] = candidate*abs(tar[p])
+                                else:
+                                    tar[p] = pitchCorrection(tar[p], candidate, 0.15)
+
                             # 写入数据库
                             srcstr = pickle.dumps(src)
                             tarstr = pickle.dumps(tar)
@@ -545,6 +616,7 @@ while True:
                             lastestPos.append(init)
                             dbitem.save()
                             frame = frame+1
+                            cycFlag = False
                     if cmdstr == "anote":
                         if lastestPos!=[]:
                             for pos in lastestPos:
@@ -574,7 +646,7 @@ while True:
                         startTone = int(item[1])  # tone 起始位置
                         length = int(item[2])-startTone  # 不包括item[2]
                         pitchTone = float(item[3])  # 这里都不用-1
-                        noteTone = librosa.hz_to_note(pitchTone/chin.scaling)  # 用于测量tone的note，不求百分数
+                        noteTone = librosa.hz_to_note(pitchTone/chin.get_scaling())  # 用于测量tone的note，不求百分数
                         tone = chin.note2tone(noteTone)  # 计算音高 ，因为程序编写费时间，不提供直接设置tone的方式
                         tonestr = '%d/%d' % (tone[0], tone[1])  # tone[0] 是音高， tone[1]是grade
                         if len(item) == 5:
@@ -582,7 +654,7 @@ while True:
                         else:
                             anoteTone = ""
                         Tone(title=baseName, pos=startTone, length=length,\
-                             pitch=pitchTone, note=librosa.hz_to_note(pitchTone/chin.scaling, cents=True),\
+                             pitch=pitchTone, note=librosa.hz_to_note(pitchTone/chin.get_scaling(), cents=True),\
                              tone=tonestr, anote=anoteTone).save()
 
                     # 删除指定的唱名条目
@@ -593,18 +665,57 @@ while True:
                     # 描述可能的音位
                     if cmdstr == "desc":
                         pitchDesc = float(item[1])
+                        print(librosa.hz_to_note(pitchDesc / chin.get_scaling(), cents=True))
                         print(chin.cal_possiblepos([pitchDesc])[1])
+
+                    # custom 自定义区域检测, 只为验证短时频率是否精确
+                    if cmdstr == "custom":
+                        initP = int(item[1])  # 初始帧
+                        stopP = int(item[2])  # 结束帧 （不包括此帧）
+                        dataSrc = np.copy(x[0][initP*nfft:stopP*nfft])  # 原始数据
+                        fftnum = len(dataSrc)  # fft长度
+                        fullFFT=fft(dataSrc)
+                        dataFFT = abs(fullFFT)[0:int((len(fullFFT)+1)/2)]
+                        pitch = baseFrqCombScan.getPitchDeScan(dataFFT, Fs, fftnum, showTestView)
+                        print("自定义区域音高检测!Fs:%d  fft_num:%d  pitch:%.2f" % (Fs, fftnum, pitch[0]))
+
+                    # 设置a4
+                    if cmdstr == "a42hz":
+                        a4 = float(item[1])
+                        YESNO = input("如此将放弃之前的hz，继续则键入Y")
+                        if YESNO == "Y":
+                            chin.set_ahz(a4)
+                            chin.updateHzesFromNotes()
+                            wave.chin = pickle.dumps(chin)
+                            wave.save(update_fields=["chin"])
+                        else:
+                            print("放弃当前设置")
+                    if cmdstr == "a42note":
+                        a4 = float(item[1])
+                        doHz = librosa.note_to_hz(chin.get_do())*chin.get_scaling()
+                        chin.set_ahz(a4)
+                        chin.updateNotesFromHzes()
+                        chin.set_do(librosa.hz_to_note(doHz/chin.get_scaling()))
+                        wave.chin = pickle.dumps(chin)
+                        wave.save(update_fields=["chin"])
+
+                    # 设置指定弦的音高
+                    if cmdstr == "hz":
+                        strID = int(item[1])-1  # 从开始标号
+                        tune = float(item[2])
+                        chin.set_hz(strID, tune)
+                        wave.chin = pickle.dumps(chin)
+                        wave.save(update_fields=["chin"])
 
                     if cmdstr == "exit":
 
                         sys.exit(0)
 
-                break
             except Exception as e:
                 print(e)
                 print('请重新输入:')
-                pass
                 break
+
         # 更新pos
         if tmpShow == False:
             lastest = Clip.objects.all()

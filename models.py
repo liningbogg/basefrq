@@ -14,9 +14,9 @@ class Clip(models.Model):
     title = models.CharField(max_length=255)
     startingPos = models.IntegerField()
     length = models.IntegerField()
-    timestamp = models.DateTimeField()
-    src = models.BinaryField()
-    tar = models.BinaryField()
+    timestamp = models.DateTimeField(null=True)
+    src = models.BinaryField(null=True)
+    tar = models.BinaryField(null=True)
     anote = models.CharField(max_length=255)
     nfft = models.IntegerField()
 
@@ -44,8 +44,7 @@ class Wave(models.Model):
     title = models.CharField(max_length=255)
     waveFile = models.CharField(max_length=255)
     frameNum = models.IntegerField()
-    notes = models.CharField(max_length=255)
-    do = models.CharField(max_length=16)
+    # chin = models.BinaryField()
     fs = models.IntegerField()
 
 

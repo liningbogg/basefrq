@@ -173,7 +173,7 @@ def getPitch(dataClip,Fs,nfft,showTestView):
     maxfrq=combTransPeaks[maxindex]#最高峰值位置
     #寻找1hz以内的最大的峰
     combThr=6*441000/Fs#寻峰宽度
-    decThr=0.75#递减阈值
+    decThr=0.65#递减阈值
     preBaseFrq=maxfrq
     for n in range(2,10,1):
         newfrq=getNearPeaks(trueTrans,combTransPeaks,peaks,n*maxfrq,combThr,preBaseFrq,decThr,showTestView)

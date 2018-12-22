@@ -56,6 +56,23 @@ showTestView=0#是否逐帧显示fft过程,需要把所有弹出窗口均关闭�
 pitchExtend=4#为了标注音高延申的数据长度，单位秒
 
 
+def filterByBasefrq(src, basefrq, width, fs, nfft):
+    """
+    通过基频进行过滤
+    :param src:待过滤信号
+    :param basefrq:基频 单位是hz
+    :param width:频宽
+    :return:过滤后信号
+    """
+    basefrq = int(basefrq*nfft/fs)
+    width = int(width*nfft/fs)
+    tar = np.copy(src)
+    num = min(int(len(src)/basefrq), 30)  # 最多过滤30个波峰
+    for i in np.arange(num):
+        frq = i*basefrq
+        tar[frq-width:frq+width] = min(src[frq-width], src[frq+width])
+    return tar
+
 #用于积分的累积求和
 def merge(src,rmse):
     x=np.copy(src)
@@ -107,6 +124,7 @@ for index in range(0,class1_listLen):
     x=stream[0]
     print('sampling rate:',stream[1])#采样率
     speech_stft,phase = librosa.magphase(librosa.stft(x[0], n_fft=nfft, hop_length=hopLength, window=scipy.signal.hamming))
+
     speech_stft=np.transpose(speech_stft)
     referencePitch=[]
     referencePitchDeScan=[]
@@ -132,10 +150,15 @@ for index in range(0,class1_listLen):
         print([frame*nfft/Fs,"%.2f"%(frame/len(speech_stft)*100.0)]) #当前时刻
         dataClip=np.copy(speech_stft[frame])
         dataClip[0:int(30*nfft/Fs)]=0#清零30hz以下信号
-        referencePitch=baseFrqComb.getPitch(dataClip,Fs,nfft,showTestView)
-        referencePitchDeScan=baseFrqCombScan.getPitchDeScan(dataClip,Fs,nfft,showTestView)
-        pickle.dump(referencePitchDeScan, fileDescan)
-        pickle.dump(referencePitch, fileComb)            
+        referencePitch=baseFrqComb.getPitch(dataClip, Fs, nfft, showTestView)
+        referencePitchDeScan = baseFrqCombScan.getPitchDeScan(dataClip, Fs, nfft, showTestView)
+        referencePitchDeScanFiltered = 0
+        if referencePitchDeScan > 65:
+            filteredSGN = filterByBasefrq(dataClip, referencePitchDeScan, 30, Fs, nfft)
+            referencePitchDeScanFiltered = baseFrqCombScan.getPitchDeScan(filteredSGN, Fs, nfft, showTestView)
+        DeScan = [referencePitchDeScan, referencePitchDeScanFiltered]  # 去扫描频率及其过滤后剩余频率
+        pickle.dump(DeScan, fileDescan)
+        pickle.dump(referencePitch, fileComb)
         fileDescan.flush()
         fileComb.flush()
         if frame%framePerFile==(framePerFile-1):

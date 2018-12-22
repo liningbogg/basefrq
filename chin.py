@@ -3,18 +3,19 @@ import librosa
 from string import digits
 import math
 import re
+from itertools import combinations
 
 class Chin:
 
     """
     Chin:
     用于处理古琴定音，音位分析，指法分析的类
-    以十二平均律标记音高，hz为7条弦音高标识的主键，定调为do对应的note值
+    以十二平均律标记音高，hz为7条弦音高标识的主键，定调为__do对应的note值
     音分散音 按音 泛音分别标记为 S A F
     相对徽位位置用来标记按音着弦点和有效弦长，另外有效弦长也可用相对弦长标识，最大相对弦长为1
     """
-    noteslist = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-    tonesList = [0,2,4,5,7,9,11]
+    __noteslist = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    __tonesList = [0,2,4,5,7,9,11]
     huiList=[0, 1.0/8, 1.0/6, 1.0/5, 1.0/4, 1.0/3, 2.0/5, 0.5, 3.0/5, 2.0/3, 3.0/4, 4.0/5, 5.0/5, 7.0/8, 1]
     fanyintimes = [8.0, 6.0, 5.0, 4.0, 3.0, 5.0, 2.0, 5.0, 3.0, 4.0, 5.0, 6.0, 8.0]
 
@@ -33,34 +34,34 @@ class Chin:
         return count-1+(pos-start)/(end-start)
 
     def note2tone(self, note):
-        grade = int(re.findall("\d+",note)[0])-int(re.findall("\d+", self.do)[0])
+        grade = int(re.findall("\d+",note)[0])-int(re.findall("\d+", self.__do)[0])
         remove_digits = str.maketrans('', '', digits)
-        reDo = note.translate(remove_digits)
+        re__do = note.translate(remove_digits)
         tone = 0
         try:
-            tone=self.tones.index(reDo)+1
+            tone=self.__tones.index(re__do)+1
             print(tone)
         except Exception as e:
             print('err')
-            return [0,0]
+            return [0, 0]
         return [tone,grade]
 
-    def cal_tones(self):
+    def cal___tones(self):
         """
         确定唱名对应的音阶
         :return:
         """
-        self.tones=[]
+        self.__tones=[]
         remove_digits = str.maketrans('', '', digits)
-        reDo = self.do.translate(remove_digits)
-        initpos=Chin.noteslist.index(reDo)
+        re__do = self.__do.translate(remove_digits)
+        initpos=Chin.__noteslist.index(re__do)
         count=0
-        for item in Chin.tonesList:
+        for item in Chin.__tonesList:
             item = item+initpos
             pos = item%12
-            self.tones.append(Chin.noteslist[pos])
+            self.__tones.append(Chin.__noteslist[pos])
             count = count+1
-        print(self.tones)
+        print(self.__tones)
 
     @staticmethod
     def cal_position(basefrq, frq):
@@ -98,10 +99,9 @@ class Chin:
         :return:匹配结果
         """
         rs = []
-        dist = abs(self.hzes - pitch)  # 音高距离
+        dist = abs(self.__hzes - pitch)  # 音高距离
         candidate = np.argmin(dist)  # 候选散音
-        relative = pitch / self.hzes[candidate]
-        score = (relative - 1) / (2 ** (1.0 / 12) - 1)
+        score = math.log(pitch, 2.0**(1.0/12))-math.log(self.__hzes[candidate], 2.0**(1.0/12))
         if abs(score) < thr:
             rs.append([candidate+1, score])
         return rs
@@ -119,9 +119,9 @@ class Chin:
         positionR = self.cal_position(stringPitch, pitch) # 相对位置
         if positionR>0.96:
            return 0
-        notesR=math.log(pitch/stringPitch, 2**(1/12)) # 相对散音音高
-        candidateNoteR=np.round(notesR)   # 候选相对散音音高
-        errR=notesR-candidateNoteR #相对散音音高误差
+        __notesR=math.log(pitch/stringPitch, 2**(1/12)) # 相对散音音高
+        candidateNoteR=np.round(__notesR)   # 候选相对散音音高
+        errR=__notesR-candidateNoteR #相对散音音高误差
         if abs(errR) > thr:
             if Chin.pos2hui(positionR)>1.5:
                 return -1.0*Chin.pos2hui(positionR)
@@ -145,7 +145,7 @@ class Chin:
         """
         rs = []
         for i in np.arange(7):
-            anyin=self.cal_anyinstring(self.hzes[i], pitch, thr, spaceThr)
+            anyin=self.cal_anyinstring(self.__hzes[i], pitch, thr, spaceThr)
             if anyin != 0:
                 rs.append([i+1 , anyin])
         return rs
@@ -185,7 +185,7 @@ class Chin:
         """
         rs = []
         for i in np.arange(7):
-            fanyin = self.cal_fanyinstring(self.hzes[i], pitch, thr)
+            fanyin = self.cal_fanyinstring(self.__hzes[i], pitch, thr)
             if fanyin !=  []:
                 rs.append([i+1, fanyin])
         return rs
@@ -237,88 +237,199 @@ class Chin:
 
     def __init__(self, **kw):
         """
-        :param notes:
+        :param __notes:
         七条弦依次对应的note（十二平均律标识）
-        :param a4_hz:
+        :param __a4_hz:
         a4对应的频率
-        :param do:
-        唱名为do的note标识
+        :param __do:
+        唱名为__do的note标识
         """
-        self.notes = None
-        self.do = None
-        self.a4_hz = None
-        self.hzes = None
-        self.tones = None
-        self.scaling = 1
+        self.__notes = None
+        self.__do = None
+        self.__a4_hz = None
+        self.__hzes = None
+        self.__tones = None
+        self.__scaling = 1
         self.pos = self.cal_notesposition(0.125)
+        self.__hui = None
         for key in kw:
             try:
-                if key == "notes":
+                if key == "__notes":
                     setattr(self, key, kw[key])
-                    string_num = len(self.notes)
+                    string_num = len(self.__notes)
                     if string_num != 7:
-                        raise Exception("string number err:notes number err %d!" % string_num)
-                    self.hzes=np.zeros(7)
+                        raise Exception("string number err:__notes number err %d!" % string_num)
+                    self.__hzes=np.zeros(7)
                     for i in np.arange(string_num):
-                        self.hzes[i] = librosa.note_to_hz(self.notes[i])*self.scaling
-                if key == "hzes":
+                        self.__hzes[i] = librosa.note_to_hz(self.__notes[i])*self.__scaling
+                if key == "__hzes":
                     setattr(self, key, kw[key])
-                    string_num = len(self.hzes)
+                    string_num = len(self.__hzes)
                     if string_num != 7:
-                        raise Exception("string number err:hzes number err %d!" % string_num)
-                    self.notes=[None]*7
+                        raise Exception("string number err:__hzes number err %d!" % string_num)
+                    self.__notes=[None]*7
                     for i in np.arange(string_num):
-                        self.notes[i] = librosa.hz_to_note(self.hzes[i], cents=True)
-                if key == "a4_hz":
+                        self.__notes[i] = librosa.hz_to_note(self.__hzes[i], cents=True)
+                if key == "__a4_hz":
                     setattr(self, key, kw[key])
-                    self.scaling = self.a4_hz / 440.0
+                    self.__scaling = self.__a4_hz / 440.0
             except Exception as e:
                 print(e)
 
     def get_notes(self):
         """
-        notes bean get
-        :return: 返回notes
+        __notes bean get
+        :return: 返回__notes
         """
-        return np.copy(self.notes)
+        return np.copy(self.__notes)
+
+    def updateNotesFromHzes(self):
+        """
+        由notes更新频率
+        :return:None
+        """
+        if self.__notes is None:
+            self.__notes = [""]*7
+        for i in np.arange(7):
+            self.__notes[i] = librosa.hz_to_note(self.__hzes[i]/self.__scaling)
+
+    def updateHzesFromNotes(self):
+        """
+        由频率更新notes
+        :return:None
+        """
+        if self.__hzes is None:
+            self.__hzes = np.zeros(7)
+        for i in np.arange(7):
+            self.__hzes[i] = librosa.note_to_hz(self.__notes[i]) * self.__scaling
 
     def set_notes(self,notes):
         """
-        notes bean set
-        :param notes: 七弦音高的十二平均律标识设置，H代表不改变此前音高
+        __notes bean set
+        :param __notes: 七弦音高的十二平均律标识设置，H代表不改变此前音高
         :return: None
         """
-        self.notes = np.where(notes == "H", self.notes, notes)
-        self.hzes = np.zeros(7)
-        for i in np.arange(7):
-            self.hzes[i] = librosa.note_to_hz(self.notes[i])*self.scaling
+        self.__notes = np.where(notes == "H", self.__notes, notes)
+        self.updateHzesFromNotes()
 
     def get_hzes(self):
         """
         :return:
-        bean 返回hzes
+        bean 返回__hzes
         """
-        return np.copy(self.hzes)
+        return np.copy(self.__hzes)
 
-    def set_hzes(self, hzes):
+    def set_hzes(self, __hzes):
         """
         设置七条弦音高，hz标识
-        :param hzes: hz为-1表示不改变之前设置
+        :param __hzes: hz为-1表示不改变之前设置
         :return: None
         """
-        self.hzes = np.where(hzes == -1, self.hzes, hzes)
+        self.__hzes = np.where(__hzes == -1, self.__hzes, __hzes)
+        self.updateNotesFromHzes()
 
     def get_ahz(self):
-        return self.a_hz
+        return self.__a4_hz
 
     def set_ahz(self, a_hz):
-        self.a4_hz=a_hz
+        self.__a4_hz=a_hz
+        self.__scaling = self.__a4_hz / 440.0
+
 
     def get_do(self):
-        return self.do
+        return self.__do
 
-    def set_do(self, do):
-        self.do = do
-        self.cal_tones()
+    def set_do(self, __do):
+        self.__do = __do
+        self.cal___tones()
 
+    def get_scaling(self):
+        return self.__scaling
 
+    def set_hz(self, strID, hz):
+        self.__hzes[strID] = hz
+        # 更新notes
+        self.updateNotesFromHzes()
+
+    def set_note(self, strID, note):
+        self.__notes[strID] = note
+        # 更新hzes
+        self.updateHzesFromNotes()
+
+    def get_hui(self):
+        """
+        获取已知明徽
+        :return: [string,pos]
+        """
+        pass
+
+    def cal_hui(self):
+        """
+        重新计算徽位信息
+        :return:
+        """
+        pass
+
+    @staticmethod
+    def harmony(pitch_a, pitch_b, validity_threshold, harmony_threshold, is_sanyin):
+        """
+        原始频率对和谐性评估函数，阈值单位为音分
+        :param pitch_a:频率a
+        :param pitch_b:频率b
+        :param validity_threshold:评估起点阈值
+        :param harmony_threshold:和谐阈值
+        :param is_sanyin:是否是散音，如果是则容忍倍频
+        :return:返回是否和谐及其参数，None表示不参与计算
+        """
+        try:
+            relation = pitch_a/pitch_b  #音比
+            note = abs(math.log(relation, 2 ** (1 / 12)))  # 计算音分关系
+            possible_note = np.round(note)  # 候选音计算， 需要四舍五入
+            note_div12_remainder = possible_note%12  # 除以12的余数，用以判断是否是倍频
+            if (is_sanyin and note_div12_remainder != 0) or (is_sanyin is False and possible_note != 0):
+                return None
+            else:
+                err = abs(note-possible_note)
+                if err > validity_threshold:  # 检测门限
+                    return None
+                else:
+                    if err < harmony_threshold:
+                        return [True, note]  # 和谐
+                    else:
+                        return [False,note]  #不和谐
+
+        except Exception as e:
+            return None
+
+    def cal_harmony(self):
+        """
+        计算和谐性
+        包括散音和谐性，容忍八度关系
+        计算泛音和谐性，不容同弦及八度关系
+        :return: 和谐音对以及不和谐音对，包括散泛音
+        """
+        rs = {'T': [], 'F': []}  # 计算结果字典
+        try:
+            # 估算散音和谐参数：和谐的弦对及不和谐的弦对
+            combinas=combinations(np.arange(7), np.arange(7))  # 待测试组合
+            for stringPair in combinas:
+                # 暂时设置为 0.30 0.15
+                harmony_result = Chin.harmony(self.__hzes[stringPair][0],self.__hzes[stringPair][1], 0.30, 0.15, True)
+                if harmony_result is not None:
+                    if harmony_result[0] is True:
+                        rs['T'].append(['s', self.__hzes[stringPair][0], self.__hzes[stringPair][1], harmony_result[1]])
+                    else:
+                        rs['F'].append(['s', self.__hzes[stringPair][0], self.__hzes[stringPair][1], harmony_result[1]])
+            # 估算泛音和谐参数：和谐的徽对及不和谐的徽对
+            self.cal_hui()  # 重新计算徽位
+            # 挑选8徽以下的徽位
+
+            # 粗算用于比对的徽位对组合
+
+            # 过滤同弦徽对
+
+            # 计算徽对组合是否和谐
+
+        except Exception as e:
+            print(e)
+            return None

@@ -187,16 +187,16 @@ def getPitchDeScan(dataClip,Fs,nfft,showTestView):
 
     #寻找1hz以内的最大的峰
     combThr=6*441000/Fs#寻峰宽度
-    decThr=0.75#递减阈值
+    decThr= 0.65#递减阈值
     preBaseFrq=maxfrq
     for n in range(2,10,1):
         newfrq=getNearPeaks(trueTrans,combTransPeaks,peaks,n*maxfrq,combThr,preBaseFrq,decThr,showTestView)
         if(newfrq>0):
-            preBaseFrq=newfrq
+            preBaseFrq = newfrq
         else:
             continue
     pitch=preBaseFrq;
-    if showTestView==1:
+    if showTestView == 1:
         plt.scatter(combTransPeaks, trueTrans[combTransPeaks], color='', marker='o', edgecolors='r', s=100)
         plt.show()     
-    return [pitch/10.0,resampY,trueTrans]
+    return [pitch/10.0, resampY, trueTrans]
